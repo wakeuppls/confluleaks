@@ -1,0 +1,236 @@
+rules:
+  - id: private-key
+    name: Private key
+    severity: critical
+    confidence: 0.99
+    regex: >-
+      (?s)-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----.*?-----END (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----
+
+  - id: pgp-private-key
+    name: PGP private key
+    severity: critical
+    confidence: 0.99
+    regex: >-
+      (?s)-----BEGIN PGP PRIVATE KEY BLOCK-----.*?-----END PGP PRIVATE KEY BLOCK-----
+
+  - id: aws-access-key-id
+    name: AWS access key ID
+    severity: high
+    confidence: 0.94
+    regex: >-
+      \b(?P<secret>(?:AKIA|ASIA)[A-Z0-9]{16})\b
+    allowlist:
+      regexes:
+        - '^AKIAIOSFODNN7EXAMPLE$'
+
+  - id: aws-secret-access-key
+    name: AWS secret access key
+    severity: critical
+    confidence: 0.97
+    regex: >-
+      (?i)\b(?:aws[_ .-]?secret[_ .-]?access[_ .-]?key|secretaccesskey)\b\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9/+=]{40})
+    min_entropy: 3.5
+
+  - id: github-token
+    name: GitHub token
+    severity: critical
+    confidence: 0.98
+    regex: >-
+      (?<![A-Za-z0-9_])(?P<secret>(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9_.-]{20,500}))(?![A-Za-z0-9_])
+    allowlist:
+      regexes:
+        - '^(?:gh[pousr]_0+|github_pat_0+)$'
+
+  - id: gitlab-token
+    name: GitLab token
+    severity: critical
+    confidence: 0.98
+    regex: >-
+      (?<![A-Za-z0-9_-])(?P<secret>(?:glpat|gloas|gldt|glrt|glrtr|glcbt|glptt|glft|glimt|glagent|glwt|glsoat|glffct)-[A-Za-z0-9_-]{16,255})(?![A-Za-z0-9_-])
+
+  - id: slack-token
+    name: Slack token
+    severity: critical
+    confidence: 0.98
+    regex: >-
+      (?<![A-Za-z0-9-])(?P<secret>xox[baprs]-[A-Za-z0-9-]{10,250})(?![A-Za-z0-9-])
+
+  - id: slack-webhook
+    name: Slack incoming webhook
+    severity: critical
+    confidence: 0.99
+    regex: >-
+      (?P<secret>https://hooks\.slack\.com/services/[A-Za-z0-9_-]{8,}/[A-Za-z0-9_-]{8,}/[A-Za-z0-9_-]{20,})
+
+  - id: google-api-key
+    name: Google API key
+    severity: high
+    confidence: 0.96
+    regex: >-
+      \b(?P<secret>AIza[0-9A-Za-z_-]{35})\b
+
+  - id: google-oauth-client-secret
+    name: Google OAuth client secret
+    severity: critical
+    confidence: 0.97
+    regex: >-
+      \b(?P<secret>GOCSPX-[0-9A-Za-z_-]{20,64})\b
+
+  - id: stripe-live-secret
+    name: Stripe live secret key
+    severity: critical
+    confidence: 0.99
+    regex: >-
+      \b(?P<secret>(?:sk|rk)_live_[0-9A-Za-z]{16,})\b
+
+  - id: sendgrid-api-key
+    name: SendGrid API key
+    severity: critical
+    confidence: 0.99
+    regex: >-
+      \b(?P<secret>SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{20,})\b
+
+  - id: npm-access-token
+    name: npm access token
+    severity: critical
+    confidence: 0.98
+    regex: >-
+      \b(?P<secret>npm_[A-Za-z0-9]{36})\b
+
+  - id: pypi-upload-token
+    name: PyPI upload token
+    severity: critical
+    confidence: 0.99
+    regex: >-
+      \b(?P<secret>pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,})\b
+
+  - id: telegram-bot-token
+    name: Telegram bot token
+    severity: high
+    confidence: 0.95
+    regex: >-
+      (?<!\d)(?P<secret>\d{8,12}:[A-Za-z0-9_-]{35})(?![A-Za-z0-9_-])
+
+  - id: new-relic-key
+    name: New Relic key
+    severity: critical
+    confidence: 0.97
+    regex: >-
+      \b(?P<secret>(?:NRAK-[A-Z0-9]{27}|(?:NRII|NRAL)-[A-Za-z0-9_-]{20,}))\b
+
+  - id: hashicorp-vault-token
+    name: HashiCorp Vault token
+    severity: critical
+    confidence: 0.98
+    regex: >-
+      \b(?P<secret>hv[bsr]\.[A-Za-z0-9_-]{20,})\b
+
+  - id: digitalocean-token
+    name: DigitalOcean token
+    severity: critical
+    confidence: 0.98
+    regex: >-
+      \b(?P<secret>do[por]_v1_[a-f0-9]{64})\b
+
+  - id: database-connection-string
+    name: Database connection string password
+    severity: critical
+    confidence: 0.96
+    regex: >-
+      (?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp)://[^:\s/@]+:(?P<secret>[^@\s/]{4,})@
+
+  - id: http-basic-auth
+    name: HTTP basic authentication password
+    severity: high
+    confidence: 0.94
+    regex: >-
+      (?i)\bhttps?://[^:\s/@]+:(?P<secret>[^@\s/]{4,})@
+
+  - id: jwt
+    name: JSON Web Token
+    severity: medium
+    confidence: 0.76
+    require_context: true
+    context_radius: 80
+    min_entropy: 3.5
+    keywords:
+      - authorization
+      - bearer
+      - access_token
+      - access token
+      - id_token
+      - id token
+      - jwt
+    regex: >-
+      (?<![A-Za-z0-9_-])(?P<secret>eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})(?![A-Za-z0-9_-])
+
+  - id: datadog-api-key
+    name: Datadog API or application key
+    severity: high
+    confidence: 0.92
+    regex: >-
+      (?i)\b(?:dd[_ .-]?(?:api|app)[_ .-]?key|datadog[_ .-]?(?:api|app)[_ .-]?key)\b\s*[:=]\s*["']?(?P<secret>[a-f0-9]{32,40})
+    min_entropy: 3.0
+
+  - id: azure-storage-account-key
+    name: Azure Storage account key
+    severity: critical
+    confidence: 0.97
+    regex: >-
+      (?i)\baccountkey\s*=\s*(?P<secret>[A-Za-z0-9+/]{86}==)
+
+  - id: azure-sas-signature
+    name: Azure shared access signature
+    severity: high
+    confidence: 0.91
+    require_context: true
+    context_radius: 200
+    keywords:
+      - sv=
+      - se=
+      - sp=
+      - sharedaccesssignature
+    regex: >-
+      (?:[?&]|\b)sig=(?P<secret>[A-Za-z0-9%/+_-]{32,200})
+
+  - id: docker-config-auth
+    name: Docker registry basic auth
+    severity: high
+    confidence: 0.88
+    min_entropy: 3.0
+    regex: >-
+      (?i)["']?auth["']?\s*:\s*["'](?P<secret>[A-Za-z0-9+/]{12,}={0,2})["']
+
+  - id: generic-password
+    name: Generic password
+    severity: high
+    confidence: 0.84
+    regex: >-
+      (?i)\b(?:password|passwd|pwd)\s*[:=]\s*(?:["'](?P<secret_quoted>[^"'<>]{8,})["']|(?P<secret>[^\s<>"']{8,}))
+    allowlist:
+      regexes:
+        - '^(?:x+|\*+|0+|<.+>)$'
+      stopwords:
+        - changeme
+        - example
+        - placeholder
+        - redacted
+        - masked
+        - dummy
+        - undefined
+
+  - id: generic-api-key
+    name: Generic API key, token, or client secret
+    severity: medium
+    confidence: 0.74
+    min_entropy: 3.2
+    regex: >-
+      (?i)\b(?:api[_ .-]?key|access[_ .-]?token|auth[_ .-]?token|client[_ .-]?secret|secret[_ .-]?key)\b\s*[:=]\s*["']?(?P<secret>[A-Za-z0-9_./+~=-]{12,200})
+    allowlist:
+      regexes:
+        - '^(?:x+|0+|\*+|<.+>|your[-_].+)$'
+      stopwords:
+        - example
+        - placeholder
+        - redacted
+        - changeme

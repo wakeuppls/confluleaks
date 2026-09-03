@@ -20,3 +20,8 @@ htmlcov/
 
 output/
 results/
+
+# Local-only Confluence mock and its integration test
+mock_confluence/
+MOCK_CONFLUENCE.md
+tests/test_mock_confluence.py
