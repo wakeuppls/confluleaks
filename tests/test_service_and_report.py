@@ -102,6 +102,8 @@ class ServiceAndReportTest(unittest.TestCase):
                 "pages": 1,
                 "versions": 1,
                 "historical_versions": 0,
+                "comments_discovered": 0,
+                "comments": 0,
                 "attachments_discovered": 0,
                 "attachments": 0,
                 "attachments_skipped": 0,
@@ -258,6 +260,97 @@ class AttachmentServiceTest(unittest.TestCase):
         )
         self.assertIn("Attachment: deployment.env (att-1)", text_output.getvalue())
         self.assertNotIn("attachment-secret", reports)
+
+
+class CommentFakeConfluenceClient(FakeConfluenceClient):
+    def iter_comments(self, page_id):
+        yield {
+            "id": "comment-1",
+            "type": "comment",
+            "version": {"number": 2},
+            "body": {
+                "storage": {"value": "<p>password=comment-secret</p>"}
+            },
+        }
+        yield {
+            "id": "comment-2",
+            "type": "comment",
+            "version": {"number": 1},
+            "body": {"storage": {"value": "<p>looks good</p>"}},
+        }
+
+
+class CommentServiceTest(unittest.TestCase):
+    def setUp(self):
+        regex = r"password=(?P<secret>\S+)"
+        self.rule = Rule(
+            id="password",
+            name="Password",
+            severity=Severity.HIGH,
+            regex=regex,
+            pattern=re.compile(regex),
+            confidence=0.9,
+        )
+
+    def test_comments_are_opt_in(self):
+        result = SecretScanner(
+            CommentFakeConfluenceClient(),
+            Detector([self.rule]),
+        ).scan()
+
+        self.assertEqual(result.comments_discovered, 0)
+        self.assertEqual(result.comments_scanned, 0)
+        self.assertEqual(len(result.findings), 1)
+
+    def test_current_comments_are_scanned_and_secret_safe(self):
+        result = SecretScanner(
+            CommentFakeConfluenceClient(),
+            Detector([self.rule]),
+            include_comments=True,
+        ).scan()
+
+        self.assertEqual(result.comments_discovered, 2)
+        self.assertEqual(result.comments_scanned, 2)
+        self.assertEqual(len(result.findings), 2)
+        comment_finding = next(
+            finding for finding in result.findings if finding.comment_id
+        )
+        self.assertEqual(comment_finding.comment_id, "comment-1")
+        self.assertIsNone(comment_finding.attachment_id)
+
+        text_output = io.StringIO()
+        json_output = io.StringIO()
+        write_text_report(result, text_output)
+        write_json_report(result, json_output)
+        reports = text_output.getvalue() + json_output.getvalue()
+        payload = json.loads(json_output.getvalue())
+        comment_payload = next(
+            finding
+            for finding in payload["findings"]
+            if finding["source"]["type"] == "comment"
+        )
+
+        self.assertEqual(
+            comment_payload["source"]["comment"],
+            {"id": "comment-1"},
+        )
+        self.assertIn("Comment: comment-1", text_output.getvalue())
+        self.assertNotIn("comment-secret", reports)
+
+    def test_invalid_comment_is_reported_in_partial_mode(self):
+        client = CommentFakeConfluenceClient()
+        client.iter_comments = lambda page_id: iter([{"id": "broken"}])
+
+        result = SecretScanner(
+            client,
+            Detector([self.rule]),
+            include_comments=True,
+            continue_on_error=True,
+        ).scan()
+
+        self.assertEqual(result.comments_discovered, 1)
+        self.assertEqual(result.comments_scanned, 0)
+        self.assertEqual(result.errors[0].scope, "page:10:comment:broken")
 
 
 class ScopeTest(unittest.TestCase):

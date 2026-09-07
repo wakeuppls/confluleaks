@@ -21,7 +21,7 @@ from scanner.report import write_json_report, write_text_report
 from scanner.sarif import build_sarif
 
 
-def make_finding(secret="known-value", attachment_id=None):
+def make_finding(secret="known-value", attachment_id=None, comment_id=None):
     regex = r"password=(?P<secret>\S+)"
     rule = Rule(
         id="generic-password",
@@ -39,6 +39,7 @@ def make_finding(secret="known-value", attachment_id=None):
         web_url="https://confluence.example.test/pages/42",
         attachment_id=attachment_id,
         attachment_name="deployment.env" if attachment_id else None,
+        comment_id=comment_id,
     )
     return Detector([rule]).scan(page)[0]
 
@@ -59,11 +60,34 @@ class BaselineTest(unittest.TestCase):
     def test_identity_distinguishes_page_and_attachment_findings(self):
         page_finding = make_finding()
         attachment_finding = make_finding(attachment_id="att-1")
+        comment_finding = make_finding(comment_id="comment-1")
 
         self.assertNotEqual(
             finding_identity(page_finding),
             finding_identity(attachment_finding),
         )
+        self.assertNotEqual(
+            finding_identity(page_finding),
+            finding_identity(comment_finding),
+        )
+        self.assertNotEqual(
+            finding_identity(attachment_finding),
+            finding_identity(comment_finding),
+        )
+
+    def test_comment_identity_is_stable_and_written_without_content(self):
+        finding = make_finding("comment-secret", comment_id="comment-1")
+        moved = replace(finding, version=99, location="line:20:column:3")
+
+        self.assertEqual(finding_identity(finding), finding_identity(moved))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+            write_baseline(path, [finding])
+            output = path.read_text(encoding="utf-8")
+            entry = json.loads(output)["findings"][0]
+
+        self.assertEqual(entry["comment_id"], "comment-1")
+        self.assertNotIn("comment-secret", output)
 
     def test_write_and_load_round_trip_is_deterministic_and_secret_safe(self):
         findings = [make_finding("first-secret"), make_finding("second-secret")]

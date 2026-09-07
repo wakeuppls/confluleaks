@@ -14,6 +14,8 @@ def write_text_report(result: ScanResult, stream: TextIO) -> None:
     stream.write(f"  Pages: {result.pages_scanned}\n")
     stream.write(f"  Versions: {result.versions_scanned}\n")
     stream.write(f"  Historical versions: {result.historical_versions_scanned}\n")
+    stream.write(f"  Comments discovered: {result.comments_discovered}\n")
+    stream.write(f"  Comments scanned: {result.comments_scanned}\n")
     stream.write(f"  Attachments discovered: {result.attachments_discovered}\n")
     stream.write(f"  Attachments scanned: {result.attachments_scanned}\n")
     stream.write(f"  Attachments skipped: {result.attachments_skipped}\n")
@@ -34,7 +36,9 @@ def write_text_report(result: ScanResult, stream: TextIO) -> None:
     for finding in result.findings:
         stream.write(f"\n[{finding.severity.value.upper()}] {finding.rule_name}\n")
         stream.write(f"  Page: {finding.page_title} ({finding.page_id})\n")
-        if finding.attachment_id:
+        if finding.comment_id:
+            stream.write(f"  Comment: {finding.comment_id}\n")
+        elif finding.attachment_id:
             stream.write(
                 "  Attachment: "
                 f"{finding.attachment_name or finding.attachment_id} "

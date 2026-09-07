@@ -68,6 +68,34 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
 
         request.assert_not_called()
 
+    def test_comments_use_paginated_storage_body_endpoint(self):
+        from scanner.confluence import ConfluenceClient
+
+        client = ConfluenceClient(
+            "https://confluence.example.test/confluence",
+            "synthetic-token",
+        )
+        comment = {
+            "id": "comment-1",
+            "body": {"storage": {"value": "<p>safe</p>"}},
+        }
+
+        with patch.object(
+            client,
+            "_iterate",
+            return_value=iter([comment]),
+        ) as iterate:
+            self.assertEqual(list(client.iter_comments("10")), [comment])
+        client.close()
+
+        iterate.assert_called_once_with(
+            "/rest/api/content/10/child/comment",
+            {
+                "expand": "body.storage,version",
+                "location": ("footer", "inline", "resolved"),
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

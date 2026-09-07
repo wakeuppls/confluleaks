@@ -24,6 +24,12 @@ class PublicCliTest(unittest.TestCase):
         self.assertEqual(exit_error.exception.code, 0)
         self.assertEqual(output.getvalue(), "confluleaks 0.1.0\n")
 
+    def test_comments_flag_is_opt_in(self):
+        parser = build_parser()
+
+        self.assertFalse(parser.parse_args([]).comments)
+        self.assertTrue(parser.parse_args(["--comments"]).comments)
+
 
 if __name__ == "__main__":
     unittest.main()

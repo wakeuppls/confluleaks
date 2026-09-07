@@ -147,6 +147,16 @@ class ConfluenceClient:
             {"expand": "version,metadata,extensions"},
         )
 
+    def iter_comments(self, page_id: str) -> Iterator[Dict[str, Any]]:
+        """Yield current comments visible to the authenticated user."""
+        yield from self._iterate(
+            f"/rest/api/content/{page_id}/child/comment",
+            {
+                "expand": "body.storage,version",
+                "location": ("footer", "inline", "resolved"),
+            },
+        )
+
     def download_attachment(
         self,
         page_id: str,

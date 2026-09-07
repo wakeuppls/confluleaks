@@ -47,6 +47,7 @@ class Page:
     web_url: Optional[str] = None
     attachment_id: Optional[str] = None
     attachment_name: Optional[str] = None
+    comment_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class Finding:
     page_url: Optional[str] = None
     attachment_id: Optional[str] = None
     attachment_name: Optional[str] = None
+    comment_id: Optional[str] = None
     matched_versions: Tuple[int, ...] = ()
 
     def to_dict(self) -> Dict[str, Any]:
@@ -85,7 +87,12 @@ class Finding:
         }
         if self.page_url:
             result["page"]["url"] = self.page_url
-        if self.attachment_id:
+        if self.comment_id:
+            result["source"] = {
+                "type": "comment",
+                "comment": {"id": self.comment_id},
+            }
+        elif self.attachment_id:
             result["source"] = {
                 "type": "attachment",
                 "attachment": {
@@ -112,6 +119,8 @@ class ScanResult:
     pages_scanned: int = 0
     versions_scanned: int = 0
     historical_versions_scanned: int = 0
+    comments_discovered: int = 0
+    comments_scanned: int = 0
     attachments_discovered: int = 0
     attachments_scanned: int = 0
     attachments_skipped: int = 0
@@ -135,6 +144,8 @@ class ScanResult:
                 "pages": self.pages_scanned,
                 "versions": self.versions_scanned,
                 "historical_versions": self.historical_versions_scanned,
+                "comments_discovered": self.comments_discovered,
+                "comments": self.comments_scanned,
                 "attachments_discovered": self.attachments_discovered,
                 "attachments": self.attachments_scanned,
                 "attachments_skipped": self.attachments_skipped,

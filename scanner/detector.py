@@ -54,6 +54,7 @@ class Detector:
                         page_url=page.web_url,
                         attachment_id=page.attachment_id,
                         attachment_name=page.attachment_name,
+                        comment_id=page.comment_id,
                     )
                 )
         return findings

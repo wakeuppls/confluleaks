@@ -95,6 +95,32 @@ class SarifReportTest(unittest.TestCase):
             attachment_result["partialFingerprints"]["primaryLocationLineHash"],
         )
 
+    def test_comment_has_distinct_uri_metadata_and_fingerprint(self):
+        page_finding = self.result.findings[0]
+        comment_finding = replace(
+            page_finding,
+            comment_id="comment/9",
+        )
+
+        results = build_sarif(
+            ScanResult(findings=[page_finding, comment_finding])
+        )["runs"][0]["results"]
+        page_result, comment_result = results
+
+        self.assertEqual(comment_result["properties"]["sourceType"], "comment")
+        self.assertEqual(comment_result["properties"]["commentId"], "comment/9")
+        artifact_uri = comment_result["locations"][0]["physicalLocation"][
+            "artifactLocation"
+        ]["uri"]
+        self.assertEqual(
+            artifact_uri,
+            "https://confluence.example.test/spaces/ENG/pages/42#comment=comment%2F9",
+        )
+        self.assertNotEqual(
+            page_result["partialFingerprints"]["primaryLocationLineHash"],
+            comment_result["partialFingerprints"]["primaryLocationLineHash"],
+        )
+
     def test_writer_is_valid_json_and_never_contains_matched_value(self):
         output = io.StringIO()
 

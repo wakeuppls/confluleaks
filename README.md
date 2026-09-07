@@ -1,7 +1,7 @@
 # Confluleaks
 
 A small, read-only AppSec scanner for finding accidentally exposed credentials
-in Confluence pages, page history, and text attachments.
+in Confluence pages, page history, comments, and text attachments.
 
 > **Status:** functional MVP, suitable for local evaluation and controlled
 > scans. Review [Known limitations](#known-limitations) before using it against
@@ -18,6 +18,7 @@ baseline output.
 - explicit space inclusion/exclusion and conservative defaults for personal and
   archived spaces;
 - optional historical page-version scanning;
+- optional scanning of current footer, inline, and resolved comments;
 - optional scanning of supported text attachments with a hard size limit;
 - 27 built-in rules covering common tokens, keys, connection strings, private
   keys, and labelled credentials;
@@ -35,6 +36,8 @@ baseline output.
 - The client targets the REST API v1 response shape. It has not yet been
   compatibility-tested against every Confluence Cloud and Data Center release.
 - Only Confluence `body.storage` page content is extracted.
+- Comment history is not scanned; only comments currently returned for each page
+  are inspected.
 - Attachments are limited to UTF-8 and BOM-marked UTF-16 text. PDF, Office,
   archives, images, and other binary formats are skipped.
 - Historical scanning performs a request for each candidate version and can be
@@ -50,8 +53,8 @@ baseline output.
 - Python 3.9 or newer;
 - network access from the scanner to the Confluence REST API;
 - a token accepted as `Authorization: Bearer ...`;
-- read access to every space, page, historical version, or attachment included
-  in the scan.
+- read access to every space, page, historical version, comment, or attachment
+  included in the scan.
 
 Use a dedicated least-privilege account where possible.
 
@@ -98,6 +101,7 @@ After reviewing the initial behavior, expand the scope deliberately:
 confluleaks \
   --space ENG \
   --space OPS \
+  --comments \
   --attachments \
   --history-limit 5 \
   --request-delay 0.1 \
@@ -141,6 +145,19 @@ Passing `--history-limit` automatically enables history. Missing historical
 versions that return `404` are skipped. Identical findings across versions are
 collapsed and retain the list of matching version numbers.
 
+### Comments
+
+Comment scanning is opt-in and covers the current comments returned by the
+Confluence REST API, including footer, inline, and resolved locations:
+
+```bash
+confluleaks --comments
+```
+
+Comments are fetched page by page. Findings identify the parent page and
+comment ID, but never include the comment body, author, matched value, or a
+surrounding snippet. Comment edit history is not scanned.
+
 ### Attachments
 
 Attachment scanning is also opt-in:
@@ -181,8 +198,8 @@ SARIF 2.1.0:
 confluleaks --format sarif > confluence-results.sarif
 ```
 
-SARIF output contains rule descriptors, severity, confidence, page or
-attachment locations, and stable partial fingerprints. It validates against
+SARIF output contains rule descriptors, severity, confidence, page, comment,
+or attachment locations, and stable partial fingerprints. It validates against
 the [OASIS SARIF 2.1.0 schema](https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json).
 Because findings point to Confluence URLs rather than repository files,
 repository-centric SARIF consumers may display the result without annotating a
@@ -213,6 +230,7 @@ Create it only after reviewing a complete scan of the intended scope:
 ```bash
 confluleaks \
   --space ENG \
+  --comments \
   --attachments \
   --write-baseline confluence-baseline.json
 ```
@@ -222,6 +240,7 @@ Use the same scope on subsequent runs:
 ```bash
 confluleaks \
   --space ENG \
+  --comments \
   --attachments \
   --baseline confluence-baseline.json \
   --format sarif \
@@ -229,8 +248,8 @@ confluleaks \
 ```
 
 Baseline entries contain an opaque finding ID, rule ID, page ID, and optional
-attachment ID. They do not contain matched values, source snippets, titles, or
-raw secret fingerprints.
+comment or attachment ID. They do not contain matched values, source snippets,
+titles, or raw secret fingerprints.
 
 Identity is stable across page renames, new page versions, and line movement.
 The same match on another page or attachment is treated as new. Baselines are
@@ -341,6 +360,7 @@ confluleaks [OPTIONS]
 
 --history                    scan all previous page versions
 --history-limit N            scan at most N previous versions per page
+--comments                   scan current page comments
 --attachments                scan supported text attachments
 --max-attachment-size-mb MB  attachment limit (default: 5 MiB)
 
@@ -363,7 +383,7 @@ Confluence REST API
 ConfluenceClient ── pagination / retry / throttling / download limits
         │
         ▼
-SecretScanner ──── scope / current pages / history / attachments
+SecretScanner ──── scope / current pages / history / comments / attachments
         │
         ├── HTML and text extraction
         ▼
@@ -412,8 +432,9 @@ python -m compileall -q confluleaks scanner tests
 ```
 
 The tests cover extraction, rules, context and entropy filtering, report
-redaction, history deduplication, attachment classification and limits, retry
-configuration, SARIF structure, baseline stability, and partial-error behavior.
+redaction, history deduplication, comment scanning, attachment classification
+and limits, retry configuration, SARIF structure, baseline stability, and
+partial-error behavior.
 
 ## Repository layout
 
@@ -447,12 +468,12 @@ small steps:
    and a release workflow.
 2. Introduce typed protocols for the Confluence client and document scanner to
    make test doubles explicit.
-3. Split `SecretScanner` page, history, and attachment orchestration into
-   focused components.
+3. Split `SecretScanner` page, history, comment, and attachment orchestration
+   into focused components.
 4. Replace string locations such as `line:2:column:10` with a typed source
    region in the domain model.
 5. Add CLI-level tests for argument validation and combinations of baseline,
-   history, attachments, and exit thresholds.
+   history, comments, attachments, and exit thresholds.
 6. Add sanitized fixtures captured from the exact target Confluence editions
    and versions.
 7. Add an authentication strategy abstraction before supporting Basic auth or

@@ -26,6 +26,7 @@ class SecretScanner:
         include_archived_spaces: bool = False,
         max_pages: Optional[int] = None,
         continue_on_error: bool = False,
+        include_comments: bool = False,
         include_attachments: bool = False,
         max_attachment_bytes: int = 5 * 1024 * 1024,
     ) -> None:
@@ -39,6 +40,7 @@ class SecretScanner:
         self.include_archived_spaces = include_archived_spaces
         self.max_pages = max_pages
         self.continue_on_error = continue_on_error
+        self.include_comments = include_comments
         self.include_attachments = include_attachments
         if max_attachment_bytes < 1:
             raise ValueError("max_attachment_bytes must be greater than zero")
@@ -162,8 +164,62 @@ class SecretScanner:
                     ScanError(scope=f"page:{page.id}:history", message=str(error))
                 )
 
+        if self.include_comments:
+            self._scan_comments(page, result)
+
         if self.include_attachments:
             self._scan_attachments(page, result)
+
+    def _scan_comments(self, page: Page, result: ScanResult) -> None:
+        try:
+            comments = self.confluence.iter_comments(page.id)
+            for raw_comment in comments:
+                result.comments_discovered += 1
+                comment_id = (
+                    str(raw_comment.get("id", "unknown"))
+                    if isinstance(raw_comment, dict)
+                    else "unknown"
+                )
+                try:
+                    if not isinstance(raw_comment, dict):
+                        raise TypeError(
+                            "Confluence comment response must be an object"
+                        )
+                    raw_comment_id = raw_comment["id"]
+                    if raw_comment_id is None:
+                        raise ValueError("Confluence comment id must not be null")
+                    comment_id = str(raw_comment_id).strip()
+                    if not comment_id:
+                        raise ValueError("Confluence comment id must not be empty")
+                    storage_value = raw_comment["body"]["storage"]["value"]
+                    if not isinstance(storage_value, str):
+                        raise TypeError("Confluence comment body must be a string")
+                except (KeyError, TypeError, ValueError):
+                    if not self.continue_on_error:
+                        raise
+                    result.errors.append(
+                        ScanError(
+                            scope=f"page:{page.id}:comment:{comment_id}",
+                            message="invalid Confluence comment response",
+                        )
+                    )
+                    continue
+
+                document = replace(
+                    page,
+                    content=extract_text(storage_value),
+                    attachment_id=None,
+                    attachment_name=None,
+                    comment_id=comment_id,
+                )
+                result.comments_scanned += 1
+                result.findings.extend(self.detector.scan(document))
+        except ConfluenceError as error:
+            if not self.continue_on_error:
+                raise
+            result.errors.append(
+                ScanError(scope=f"page:{page.id}:comments", message=str(error))
+            )
 
     def _scan_attachments(self, page: Page, result: ScanResult) -> None:
         try:
@@ -245,6 +301,7 @@ class SecretScanner:
                 -finding.severity.rank,
                 finding.space_key,
                 finding.page_id,
+                finding.comment_id or "",
                 finding.attachment_id or "",
                 finding.rule_id,
             )
@@ -283,10 +340,11 @@ class SecretScanner:
 
     @staticmethod
     def _deduplicate(findings: Iterable[Finding]) -> List[Finding]:
-        unique: Dict[Tuple[str, str, str, str], Finding] = {}
+        unique: Dict[Tuple[str, str, str, str, str], Finding] = {}
         for finding in findings:
             key = (
                 finding.page_id,
+                finding.comment_id or "",
                 finding.attachment_id or "",
                 finding.rule_id,
                 finding.fingerprint,

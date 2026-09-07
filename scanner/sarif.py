@@ -1,7 +1,7 @@
 import hashlib
 import json
 import re
-from typing import Any, Dict, List, TextIO, Tuple
+from typing import Any, Dict, List, Optional, TextIO, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from scanner import PRODUCT_NAME, __version__
@@ -131,9 +131,11 @@ def _sarif_result(
         "pageTitle": finding.page_title,
         "pageVersion": finding.version,
         "matchedVersions": list(finding.matched_versions or (finding.version,)),
-        "sourceType": "attachment" if finding.attachment_id else "page",
+        "sourceType": _source_type(finding),
     }
-    if finding.attachment_id:
+    if finding.comment_id:
+        properties["commentId"] = finding.comment_id
+    elif finding.attachment_id:
         properties["attachmentId"] = finding.attachment_id
         properties["attachmentName"] = (
             finding.attachment_name or finding.attachment_id
@@ -165,11 +167,11 @@ def _artifact_uri(finding: Finding) -> str:
         page_id = quote(finding.page_id, safe="")
         page_uri = f"confluence://content/spaces/{space}/pages/{page_id}"
 
-    if not finding.attachment_id:
+    marker = _source_marker(finding)
+    if marker is None:
         return page_uri
 
     parsed = urlsplit(page_uri)
-    marker = f"attachment={quote(finding.attachment_id, safe='')}"
     fragment = f"{parsed.fragment}&{marker}" if parsed.fragment else marker
     return urlunsplit(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.query, fragment)
@@ -177,6 +179,8 @@ def _artifact_uri(finding: Finding) -> str:
 
 
 def _artifact_description(finding: Finding) -> str:
+    if finding.comment_id:
+        return f"Confluence comment {finding.comment_id} on page {finding.page_title}"
     if finding.attachment_id:
         name = finding.attachment_name or finding.attachment_id
         return f"Confluence attachment {name} on page {finding.page_title}"
@@ -194,15 +198,32 @@ def _region(location: str) -> Dict[str, int]:
 
 
 def _location_fingerprint(finding: Finding) -> str:
-    material = "\0".join(
-        (
-            finding.page_id,
-            finding.attachment_id or "",
-            finding.rule_id,
-            finding.fingerprint,
-        )
-    ).encode("utf-8")
+    identity_parts = [
+        finding.page_id,
+        finding.attachment_id or "",
+        finding.rule_id,
+        finding.fingerprint,
+    ]
+    if finding.comment_id:
+        identity_parts.append(finding.comment_id)
+    material = "\0".join(identity_parts).encode("utf-8")
     return hashlib.sha256(material).hexdigest()
+
+
+def _source_type(finding: Finding) -> str:
+    if finding.comment_id:
+        return "comment"
+    if finding.attachment_id:
+        return "attachment"
+    return "page"
+
+
+def _source_marker(finding: Finding) -> Optional[str]:
+    if finding.comment_id:
+        return f"comment={quote(finding.comment_id, safe='')}"
+    if finding.attachment_id:
+        return f"attachment={quote(finding.attachment_id, safe='')}"
+    return None
 
 
 def _sarif_level(severity: Severity) -> str:

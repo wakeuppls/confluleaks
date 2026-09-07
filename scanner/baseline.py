@@ -27,13 +27,16 @@ class Baseline:
 
 def finding_identity(finding: Finding) -> str:
     """Build an opaque identity stable across page revisions and line moves."""
+    identity_parts = [
+        finding.rule_id,
+        finding.fingerprint,
+        finding.page_id,
+        finding.attachment_id or "",
+    ]
+    if finding.comment_id:
+        identity_parts.append(finding.comment_id)
     material = json.dumps(
-        [
-            finding.rule_id,
-            finding.fingerprint,
-            finding.page_id,
-            finding.attachment_id or "",
-        ],
+        identity_parts,
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
@@ -96,6 +99,8 @@ def write_baseline(path: Path, findings: Iterable[Finding]) -> None:
         }
         if finding.attachment_id:
             entry["attachment_id"] = finding.attachment_id
+        if finding.comment_id:
+            entry["comment_id"] = finding.comment_id
         entries_by_id[identity] = entry
 
     payload = {

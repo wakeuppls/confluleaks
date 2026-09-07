@@ -89,6 +89,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="scan at most this many previous versions per page",
     )
     parser.add_argument(
+        "--comments",
+        action="store_true",
+        help="scan current page comments",
+    )
+    parser.add_argument(
         "--attachments",
         action="store_true",
         help="scan supported text attachments",
@@ -192,6 +197,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 include_archived_spaces=args.include_archived_spaces,
                 max_pages=args.max_pages,
                 continue_on_error=args.continue_on_error,
+                include_comments=args.comments,
                 include_attachments=args.attachments,
                 max_attachment_bytes=max(
                     1,
