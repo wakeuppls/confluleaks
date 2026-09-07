@@ -1,6 +1,7 @@
+import json
 import os
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from unittest.mock import MagicMock, Mock, patch
 
@@ -9,6 +10,7 @@ import scanner
 from scanner.auth import AuthConfigurationError, AuthMethod
 from scanner.main import _load_auth, build_parser, main
 from scanner.models import ScanResult
+from scanner.preflight import PreflightResult
 
 
 class PublicCliTest(unittest.TestCase):
@@ -85,6 +87,57 @@ class PublicCliTest(unittest.TestCase):
         self.assertEqual(args.max_findings, 10_000)
         self.assertEqual(args.max_findings_per_document, 1_000)
         self.assertEqual(args.max_runtime, 3_600.0)
+
+    def test_preflight_bypasses_rules_and_returns_its_status(self):
+        result = PreflightResult()
+        result.add("rest_api", "pass", "synthetic success")
+        checker = Mock()
+        checker.run.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+        output = StringIO()
+
+        with patch.dict(
+            os.environ,
+            {"CONFLUENCE_TOKEN": "synthetic-token"},
+            clear=True,
+        ), patch("scanner.main.ConfluenceClient", return_value=client), patch(
+            "scanner.main.PreflightChecker", return_value=checker
+        ) as checker_class, patch(
+            "scanner.main.load_rules"
+        ) as load_rules, redirect_stdout(output):
+            exit_code = main(
+                [
+                    "--url",
+                    "https://confluence.example.test",
+                    "--preflight",
+                    "--space",
+                    "ENG",
+                    "--comments",
+                    "--format",
+                    "json",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(output.getvalue())["preflight"]["ok"])
+        load_rules.assert_not_called()
+        self.assertEqual(checker_class.call_args.kwargs["space_keys"], ["ENG"])
+        self.assertTrue(checker_class.call_args.kwargs["check_comments"])
+
+    def test_preflight_rejects_sarif_output(self):
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+            main(
+                [
+                    "--url",
+                    "https://confluence.example.test",
+                    "--preflight",
+                    "--format",
+                    "sarif",
+                ]
+            )
+
+        self.assertEqual(error.exception.code, 2)
 
     def test_truncated_result_returns_operational_error(self):
         result = ScanResult()

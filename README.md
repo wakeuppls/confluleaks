@@ -21,6 +21,8 @@ baseline output.
 - optional scanning of current footer, inline, and resolved comments;
 - optional scanning of supported text attachments with a hard size limit;
 - Bearer token and HTTP Basic authentication;
+- read-only preflight checks for authentication, REST API shape, and requested
+  content capabilities;
 - 27 built-in rules covering common tokens, keys, connection strings, private
   keys, and labelled credentials;
 - rule-specific context, entropy thresholds, allowlists, and stopwords;
@@ -101,6 +103,45 @@ confluleaks --space ENG
 `--auth bearer` or `--auth basic` overrides `CONFLUENCE_AUTH`. Bearer remains
 the default for backward compatibility. Prefer a dedicated least-privilege
 account and tokens over reusable account passwords.
+
+## Preflight
+
+Before scanning a real installation, verify the connection and the exact scope
+you plan to enable:
+
+```bash
+confluleaks --preflight --space ENG
+```
+
+This checks authentication, the REST API v1 collection shape, direct access to
+the requested space, and one current page response. Add scope flags to probe
+their endpoints too:
+
+```bash
+confluleaks \
+  --preflight \
+  --space ENG \
+  --comments \
+  --attachments \
+  --history \
+  --format json
+```
+
+Comment and attachment checks fetch at most one metadata/content record from
+their collection endpoints; attachments are not downloaded. The history check
+requests at most one previous version of the sample page. If no `--space` is
+provided, the first visible space and one of its pages are used as samples.
+
+`PASS` means the sampled endpoint returned the expected REST API v1 shape.
+`WARN` means a capability could not be verified because there was no suitable
+sample, such as a previous page version; warnings still return exit code `0`.
+`FAIL` covers rejected authentication, missing permissions, unavailable
+resources, or incompatible response fields and returns exit code `1`.
+
+Preflight does not load detection rules, scan content, download attachments, or
+write baselines. It is a compatibility probe, not proof that the account can
+read every page in a large installation. Output is available as `text` or
+`json`; SARIF is intentionally reserved for actual findings.
 
 ## Quick start
 
@@ -406,6 +447,7 @@ confluleaks [OPTIONS]
 
 --url URL                    override CONFLUENCE_URL
 --auth {bearer,basic}        authentication method (default: bearer)
+--preflight                  check authentication and REST capabilities
 --version                    print the installed version
 --rules PATH                 load a YAML rules file
 --format {text,json,sarif}   output format (default: text)
@@ -449,6 +491,7 @@ Confluence REST API
         ▼
 ConfluenceClient ── pagination / retry / throttling / response limits
         │
+        ├── PreflightChecker ── capability checks ── text / JSON
         ▼
 SecretScanner ──── scope / current pages / history / comments / attachments
         │
@@ -502,13 +545,15 @@ python -m compileall -q confluleaks scanner tests
 The tests cover extraction, rules, context and entropy filtering, report
 redaction, history deduplication, comment scanning, attachment classification
 and limits, response/document/finding/runtime guardrails, regex timeouts, retry
-configuration, SARIF structure, baseline stability, and partial-error behavior.
+configuration, preflight compatibility checks, SARIF structure, baseline
+stability, and partial-error behavior.
 
 ## Repository layout
 
 ```text
 scanner/
   auth.py             Bearer and Basic authentication strategies
+  preflight.py        read-only connection and compatibility checks
   main.py             CLI and exit-code policy
   confluence.py       REST client, pagination, retries, downloads
   service.py          scan orchestration and scope

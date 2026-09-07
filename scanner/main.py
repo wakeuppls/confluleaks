@@ -16,6 +16,11 @@ from scanner.baseline import (
 from scanner.confluence import ConfluenceClient, ConfluenceError
 from scanner.detector import Detector
 from scanner.models import Severity
+from scanner.preflight import (
+    PreflightChecker,
+    write_json_preflight,
+    write_text_preflight,
+)
 from scanner.report import write_json_report, write_text_report
 from scanner.rules import DEFAULT_RULES_PATH, RuleConfigurationError, load_rules
 from scanner.sarif import write_sarif_report
@@ -40,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
             AuthMethod.BEARER.value,
         ).casefold(),
         help="authentication method (or set CONFLUENCE_AUTH; default: bearer)",
+    )
+    parser.add_argument(
+        "--preflight",
+        action="store_true",
+        help="check authentication and requested REST capabilities without scanning",
     )
     parser.add_argument(
         "--version",
@@ -196,6 +206,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if not args.url:
         parser.error("Confluence URL is required via --url or CONFLUENCE_URL")
+    if args.preflight and args.format == "sarif":
+        parser.error("--preflight supports only text and json output")
+    if args.preflight and (args.baseline or args.write_baseline or args.fail_on):
+        parser.error(
+            "--baseline, --write-baseline, and --fail-on cannot be used with "
+            "--preflight"
+        )
     try:
         auth = _load_auth(args.auth)
     except AuthConfigurationError as error:
@@ -246,8 +263,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("the same space cannot be included and excluded")
 
     try:
-        baseline = load_baseline(args.baseline) if args.baseline else None
-        rules = load_rules(args.rules)
         with ConfluenceClient(
             args.url,
             timeout=args.timeout,
@@ -261,31 +276,49 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ),
             auth=auth,
         ) as client:
-            result = SecretScanner(
-                client,
-                Detector(rules, regex_timeout=args.regex_timeout),
-                include_history=args.history,
-                history_limit=args.history_limit,
-                include_spaces=args.space,
-                exclude_spaces=args.exclude_space,
-                include_personal_spaces=args.include_personal_spaces,
-                include_archived_spaces=args.include_archived_spaces,
-                max_pages=args.max_pages,
-                continue_on_error=args.continue_on_error,
-                include_comments=args.comments,
-                include_attachments=args.attachments,
-                max_attachment_bytes=max(
-                    1,
-                    int(args.max_attachment_size_mb * 1024 * 1024),
-                ),
-                max_document_bytes=max(
-                    1,
-                    int(args.max_document_size_mb * 1024 * 1024),
-                ),
-                max_findings=args.max_findings,
-                max_findings_per_document=args.max_findings_per_document,
-                max_runtime_seconds=args.max_runtime,
-            ).scan()
+            if args.preflight:
+                preflight_result = PreflightChecker(
+                    client,
+                    space_keys=args.space,
+                    check_history=args.history,
+                    check_comments=args.comments,
+                    check_attachments=args.attachments,
+                ).run()
+            else:
+                baseline = load_baseline(args.baseline) if args.baseline else None
+                rules = load_rules(args.rules)
+                result = SecretScanner(
+                    client,
+                    Detector(rules, regex_timeout=args.regex_timeout),
+                    include_history=args.history,
+                    history_limit=args.history_limit,
+                    include_spaces=args.space,
+                    exclude_spaces=args.exclude_space,
+                    include_personal_spaces=args.include_personal_spaces,
+                    include_archived_spaces=args.include_archived_spaces,
+                    max_pages=args.max_pages,
+                    continue_on_error=args.continue_on_error,
+                    include_comments=args.comments,
+                    include_attachments=args.attachments,
+                    max_attachment_bytes=max(
+                        1,
+                        int(args.max_attachment_size_mb * 1024 * 1024),
+                    ),
+                    max_document_bytes=max(
+                        1,
+                        int(args.max_document_size_mb * 1024 * 1024),
+                    ),
+                    max_findings=args.max_findings,
+                    max_findings_per_document=args.max_findings_per_document,
+                    max_runtime_seconds=args.max_runtime,
+                ).scan()
+
+        if args.preflight:
+            if args.format == "json":
+                write_json_preflight(preflight_result, sys.stdout)
+            else:
+                write_text_preflight(preflight_result, sys.stdout)
+            return 0 if preflight_result.ok else 1
 
         observed_findings = tuple(result.findings)
         if args.write_baseline:

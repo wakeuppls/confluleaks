@@ -1,7 +1,7 @@
 import json
 import time
 from typing import Any, Dict, Iterator, Optional
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -95,6 +95,10 @@ class ConfluenceClient:
     def iter_spaces(self) -> Iterator[Dict[str, Any]]:
         yield from self._iterate("/rest/api/space")
 
+    def get_space(self, space_key: str) -> Dict[str, Any]:
+        encoded_key = quote(space_key, safe="")
+        return self._get(f"/rest/api/space/{encoded_key}")
+
     def get_pages(
         self,
         start: int = 0,
@@ -123,15 +127,17 @@ class ConfluenceClient:
         yield from self._iterate("/rest/api/content", params)
 
     def get_page(self, page_id: str) -> Dict[str, Any]:
+        encoded_page_id = quote(page_id, safe="")
         return self._get(
-            f"/rest/api/content/{page_id}",
+            f"/rest/api/content/{encoded_page_id}",
             params={"expand": "body.storage,version,space"},
         )
 
     def get_page_version(self, page_id: str, version: int) -> Dict[str, Any]:
         """Fetch one historical page version through the stable content endpoint."""
+        encoded_page_id = quote(page_id, safe="")
         return self._get(
-            f"/rest/api/content/{page_id}",
+            f"/rest/api/content/{encoded_page_id}",
             params={
                 "status": "historical",
                 "version": version,
@@ -159,18 +165,54 @@ class ConfluenceClient:
                 raise
 
     def iter_attachments(self, page_id: str) -> Iterator[Dict[str, Any]]:
+        encoded_page_id = quote(page_id, safe="")
+        endpoint = f"/rest/api/content/{encoded_page_id}/child/attachment"
         yield from self._iterate(
-            f"/rest/api/content/{page_id}/child/attachment",
+            endpoint,
             {"expand": "version,metadata,extensions"},
+        )
+
+    def get_attachments(
+        self,
+        page_id: str,
+        start: int = 0,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        encoded_page_id = quote(page_id, safe="")
+        return self._get(
+            f"/rest/api/content/{encoded_page_id}/child/attachment",
+            params={
+                "expand": "version,metadata,extensions",
+                "start": start,
+                "limit": limit or self.page_size,
+            },
         )
 
     def iter_comments(self, page_id: str) -> Iterator[Dict[str, Any]]:
         """Yield current comments visible to the authenticated user."""
+        encoded_page_id = quote(page_id, safe="")
         yield from self._iterate(
-            f"/rest/api/content/{page_id}/child/comment",
+            f"/rest/api/content/{encoded_page_id}/child/comment",
             {
                 "expand": "body.storage,version",
                 "location": ("footer", "inline", "resolved"),
+            },
+        )
+
+    def get_comments(
+        self,
+        page_id: str,
+        start: int = 0,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        encoded_page_id = quote(page_id, safe="")
+        return self._get(
+            f"/rest/api/content/{encoded_page_id}/child/comment",
+            params={
+                "expand": "body.storage,version",
+                "location": ("footer", "inline", "resolved"),
+                "start": start,
+                "limit": limit or self.page_size,
             },
         )
 
@@ -191,9 +233,11 @@ class ConfluenceClient:
         if download_link:
             endpoint = str(download_link)
         elif attachment_id:
+            encoded_page_id = quote(page_id, safe="")
+            encoded_attachment_id = quote(attachment_id, safe="")
             endpoint = (
-                f"/rest/api/content/{page_id}/child/attachment/"
-                f"{attachment_id}/download"
+                f"/rest/api/content/{encoded_page_id}/child/attachment/"
+                f"{encoded_attachment_id}/download"
             )
         else:
             raise ConfluenceError("attachment response is missing an id")
