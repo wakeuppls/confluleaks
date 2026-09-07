@@ -1,12 +1,13 @@
 import json
 from typing import TextIO
 
+from scanner import PRODUCT_NAME
 from scanner.models import ScanResult, Severity
 
 
 def write_text_report(result: ScanResult, stream: TextIO) -> None:
     counts = result.counts_by_severity()
-    stream.write("Confluence Secret Scanner\n\n")
+    stream.write(f"{PRODUCT_NAME}\n\n")
     stream.write("Scanned:\n")
     stream.write(f"  Spaces discovered: {result.spaces_discovered}\n")
     stream.write(f"  Spaces: {result.spaces_scanned}\n")

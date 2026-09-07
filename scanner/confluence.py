@@ -6,6 +6,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from scanner import __version__
+
 
 class ConfluenceError(RuntimeError):
     """A Confluence request failed without exposing response content."""
@@ -40,7 +42,7 @@ class ConfluenceClient:
             {
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
-                "User-Agent": "confluence-secret-scanner/0.1",
+                "User-Agent": f"confluleaks/{__version__}",
             }
         )
         retry_policy = Retry(

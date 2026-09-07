@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, TextIO, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 
+from scanner import PRODUCT_NAME, __version__
 from scanner.models import Finding, ScanResult, Severity
 
 
@@ -11,8 +12,6 @@ SARIF_SCHEMA = (
     "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/"
     "schemas/sarif-schema-2.1.0.json"
 )
-TOOL_NAME = "Confluence Secret Scanner"
-TOOL_VERSION = "0.1.0"
 LOCATION_PATTERN = re.compile(r"^line:(\d+):column:(\d+)$")
 
 
@@ -73,8 +72,8 @@ def build_sarif(result: ScanResult) -> Dict[str, Any]:
     run: Dict[str, Any] = {
         "tool": {
             "driver": {
-                "name": TOOL_NAME,
-                "semanticVersion": TOOL_VERSION,
+                "name": PRODUCT_NAME,
+                "semanticVersion": __version__,
                 "rules": rules,
             }
         },

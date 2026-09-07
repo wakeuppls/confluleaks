@@ -20,6 +20,7 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
             backoff=0.25,
         )
         retry = client.session.get_adapter("https://").max_retries
+        user_agent = client.session.headers["User-Agent"]
         client.close()
 
         self.assertEqual(retry.total, 4)
@@ -27,6 +28,7 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
         self.assertEqual(set(retry.status_forcelist), {429, 500, 502, 503, 504})
         self.assertEqual(set(retry.allowed_methods), {"GET"})
         self.assertTrue(retry.respect_retry_after_header)
+        self.assertEqual(user_agent, "confluleaks/0.1.0")
 
     def test_request_delay_spaces_request_start_times(self):
         from scanner.confluence import ConfluenceClient

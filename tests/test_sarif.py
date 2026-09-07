@@ -55,7 +55,8 @@ class SarifReportTest(unittest.TestCase):
         self.assertEqual(payload["version"], "2.1.0")
         self.assertEqual(len(payload["runs"]), 1)
         run = payload["runs"][0]
-        self.assertEqual(run["tool"]["driver"]["name"], "Confluence Secret Scanner")
+        self.assertEqual(run["tool"]["driver"]["name"], "Confluleaks")
+        self.assertEqual(run["tool"]["driver"]["semanticVersion"], "0.1.0")
         self.assertEqual(len(run["tool"]["driver"]["rules"]), 1)
         self.assertEqual(len(run["artifacts"]), 2)
         self.assertEqual(len(run["results"]), 2)

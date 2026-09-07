@@ -1,4 +1,4 @@
-# Confluence Secret Scanner
+# Confluleaks
 
 A small, read-only AppSec scanner for finding accidentally exposed credentials
 in Confluence pages, page history, and text attachments.
@@ -62,11 +62,12 @@ From the repository root:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install .
 ```
 
-The project currently runs directly from the checkout; it is not packaged as a
-wheel or console script yet.
+This installs the `confluleaks` command in the active environment. For editable
+development with a current pip version, use `python -m pip install -e .`.
+Running `python -m confluleaks` directly from the checkout is also supported.
 
 ## Quick start
 
@@ -84,7 +85,7 @@ the scanner endpoints below `<base>/rest/api/...`.
 Start with a small, current-page-only scan:
 
 ```bash
-python -m scanner --space ENG --max-pages 100
+confluleaks --space ENG --max-pages 100
 ```
 
 `--max-pages` intentionally truncates the result and marks it as truncated. It
@@ -94,7 +95,7 @@ baseline.
 After reviewing the initial behavior, expand the scope deliberately:
 
 ```bash
-python -m scanner \
+confluleaks \
   --space ENG \
   --space OPS \
   --attachments \
@@ -112,13 +113,13 @@ spaces. Personal and archived spaces are skipped.
 
 ```bash
 # Scan only selected spaces. The option can be repeated.
-python -m scanner --space ENG --space OPS
+confluleaks --space ENG --space OPS
 
 # Scan all default spaces except selected ones.
-python -m scanner --exclude-space PUBLIC
+confluleaks --exclude-space PUBLIC
 
 # Expand the default selection.
-python -m scanner --include-personal-spaces --include-archived-spaces
+confluleaks --include-personal-spaces --include-archived-spaces
 ```
 
 An explicitly selected `--space` is scanned even if it is personal or archived.
@@ -130,10 +131,10 @@ History is opt-in:
 
 ```bash
 # All available previous versions.
-python -m scanner --history
+confluleaks --history
 
 # At most five previous versions per current page.
-python -m scanner --history-limit 5
+confluleaks --history-limit 5
 ```
 
 Passing `--history-limit` automatically enables history. Missing historical
@@ -146,10 +147,10 @@ Attachment scanning is also opt-in:
 
 ```bash
 # Supported text attachments up to 5 MiB each.
-python -m scanner --attachments
+confluleaks --attachments
 
 # Override the per-attachment limit.
-python -m scanner --attachments --max-attachment-size-mb 1
+confluleaks --attachments --max-attachment-size-mb 1
 ```
 
 Supported extensions are `.cfg`, `.conf`, `.csv`, `.env`, `.ini`, `.js`,
@@ -165,19 +166,19 @@ Cross-origin attachment links are rejected before a request is made.
 Human-readable output is the default:
 
 ```bash
-python -m scanner --format text
+confluleaks --format text
 ```
 
 Scanner-native JSON:
 
 ```bash
-python -m scanner --format json > confluence-results.json
+confluleaks --format json > confluence-results.json
 ```
 
 SARIF 2.1.0:
 
 ```bash
-python -m scanner --format sarif > confluence-results.sarif
+confluleaks --format sarif > confluence-results.sarif
 ```
 
 SARIF output contains rule descriptors, severity, confidence, page or
@@ -190,7 +191,7 @@ source file in the repository.
 Use `--fail-on` to make findings affect CI:
 
 ```bash
-python -m scanner --format sarif --fail-on high > confluence-results.sarif
+confluleaks --format sarif --fail-on high > confluence-results.sarif
 ```
 
 | Exit code | Meaning |
@@ -210,7 +211,7 @@ ones.
 Create it only after reviewing a complete scan of the intended scope:
 
 ```bash
-python -m scanner \
+confluleaks \
   --space ENG \
   --attachments \
   --write-baseline confluence-baseline.json
@@ -219,7 +220,7 @@ python -m scanner \
 Use the same scope on subsequent runs:
 
 ```bash
-python -m scanner \
+confluleaks \
   --space ENG \
   --attachments \
   --baseline confluence-baseline.json \
@@ -247,7 +248,7 @@ The default rules live in
 file with `--rules`:
 
 ```bash
-python -m scanner --rules ./organization-rules.yaml
+confluleaks --rules ./organization-rules.yaml
 ```
 
 Minimal rule:
@@ -307,7 +308,7 @@ The client retries `429`, `500`, `502`, `503`, and `504` responses with
 exponential backoff and honors `Retry-After`.
 
 ```bash
-python -m scanner \
+confluleaks \
   --retries 5 \
   --backoff 1 \
   --request-delay 0.2 \
@@ -320,10 +321,13 @@ code `1`.
 
 ## Command reference
 
-Run `python -m scanner --help` for the authoritative CLI help.
+Run `confluleaks --help` for the authoritative CLI help.
 
 ```text
+confluleaks [OPTIONS]
+
 --url URL                    override CONFLUENCE_URL
+--version                    print the installed version
 --rules PATH                 load a YAML rules file
 --format {text,json,sarif}   output format (default: text)
 --page-size N                pagination size (default: 50; capped at 200)
@@ -404,7 +408,7 @@ python -m unittest discover -s tests -v
 Optional syntax compilation check:
 
 ```bash
-python -m compileall -q scanner tests
+python -m compileall -q confluleaks scanner tests
 ```
 
 The tests cover extraction, rules, context and entropy filtering, report
@@ -427,7 +431,11 @@ scanner/
   baseline.py         baseline identity, loading, and atomic writing
   report.py           text and scanner-native JSON output
   sarif.py            SARIF 2.1.0 output
+confluleaks/
+  __main__.py         branded `python -m confluleaks` entry point
 tests/                 unit and integration-oriented tests
+pyproject.toml         Python build backend configuration
+setup.cfg              metadata, dependencies, package data, and console script
 ```
 
 ## Suggested refactoring checklist
@@ -435,8 +443,8 @@ tests/                 unit and integration-oriented tests
 The MVP behavior is covered by tests, so the following work can be done in
 small steps:
 
-1. Add `pyproject.toml`, package metadata, a console entry point, and one
-   centralized version constant.
+1. Complete package metadata with project URLs, license selection, build checks,
+   and a release workflow.
 2. Introduce typed protocols for the Confluence client and document scanner to
    make test doubles explicit.
 3. Split `SecretScanner` page, history, and attachment orchestration into

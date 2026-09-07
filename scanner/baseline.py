@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, Optional
 
+from scanner import PRODUCT_NAME
 from scanner.models import Finding, ScanResult
 
 
@@ -99,7 +100,7 @@ def write_baseline(path: Path, findings: Iterable[Finding]) -> None:
 
     payload = {
         "version": BASELINE_VERSION,
-        "generated_by": "Confluence Secret Scanner",
+        "generated_by": PRODUCT_NAME,
         "findings": [entries_by_id[key] for key in sorted(entries_by_id)],
     }
 

@@ -75,8 +75,10 @@ class BaselineTest(unittest.TestCase):
             baseline = load_baseline(path)
             write_baseline(path, findings)
             second_output = path.read_text(encoding="utf-8")
+            payload = json.loads(first_output)
 
             self.assertEqual(first_output, second_output)
+            self.assertEqual(payload["generated_by"], "Confluleaks")
             self.assertEqual(
                 baseline.finding_ids,
                 frozenset(finding_identity(finding) for finding in findings),

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
+from scanner import PRODUCT_COMMAND, __version__
 from scanner.baseline import (
     BaselineError,
     apply_baseline,
@@ -22,13 +23,18 @@ from scanner.service import SecretScanner
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="confluence-secret-scanner",
+        prog=PRODUCT_COMMAND,
         description="Scan current Confluence pages for accidentally exposed secrets",
     )
     parser.add_argument(
         "--url",
         default=os.environ.get("CONFLUENCE_URL"),
         help="Confluence base URL (or set CONFLUENCE_URL)",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--rules",
