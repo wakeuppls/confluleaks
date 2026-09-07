@@ -49,8 +49,10 @@ class SecretScanner:
         self.detector = detector
         self.include_history = include_history
         self.history_limit = history_limit
-        self.include_spaces = self._normalized_keys(include_spaces)
-        self.exclude_spaces = self._normalized_keys(exclude_spaces)
+        self.include_space_keys = self._unique_keys(include_spaces)
+        self.include_spaces = self._normalized_keys(self.include_space_keys)
+        self.exclude_space_keys = self._unique_keys(exclude_spaces)
+        self.exclude_spaces = self._normalized_keys(self.exclude_space_keys)
         self.include_personal_spaces = include_personal_spaces
         self.include_archived_spaces = include_archived_spaces
         self.max_pages = max_pages
@@ -87,26 +89,11 @@ class SecretScanner:
             return self._finalize(result)
 
     def _scan(self, result: ScanResult) -> ScanResult:
-        spaces = []
-        for space in self.confluence.iter_spaces():
-            self._check_runtime(result)
-            spaces.append(space)
-            result.spaces_discovered += 1
+        spaces = self._discover_spaces(result)
         selected_spaces = self._select_spaces(spaces)
 
-        discovered_keys = self._normalized_keys(
-            str(space.get("key", "")) for space in spaces
-        )
-        for missing_key in sorted(self.include_spaces - discovered_keys):
-            result.errors.append(
-                ScanError(
-                    scope=f"space:{missing_key}",
-                    message="requested space was not returned by Confluence",
-                )
-            )
-
         for space in selected_spaces:
-            space_key = str(space["key"])
+            space_key = self._space_key(space)
             result.spaces_scanned += 1
             try:
                 pages = self.confluence.iter_pages(space_key=space_key)
@@ -142,8 +129,9 @@ class SecretScanner:
                 )
             )
             return
-        page_id = str(raw_page.get("id", "unknown"))
+        page_id = "unknown"
         try:
+            page_id = self._content_id(raw_page, "page")
             storage_value = self._storage_value(raw_page)
             if not self._document_within_limit(
                 storage_value,
@@ -255,22 +243,13 @@ class SecretScanner:
             for raw_comment in comments:
                 self._check_runtime(result)
                 result.comments_discovered += 1
-                comment_id = (
-                    str(raw_comment.get("id", "unknown"))
-                    if isinstance(raw_comment, dict)
-                    else "unknown"
-                )
+                comment_id = "unknown"
                 try:
                     if not isinstance(raw_comment, dict):
                         raise TypeError(
                             "Confluence comment response must be an object"
                         )
-                    raw_comment_id = raw_comment["id"]
-                    if raw_comment_id is None:
-                        raise ValueError("Confluence comment id must not be null")
-                    comment_id = str(raw_comment_id).strip()
-                    if not comment_id:
-                        raise ValueError("Confluence comment id must not be empty")
+                    comment_id = self._content_id(raw_comment, "comment")
                     storage_value = raw_comment["body"]["storage"]["value"]
                     if not isinstance(storage_value, str):
                         raise TypeError("Confluence comment body must be a string")
@@ -338,7 +317,22 @@ class SecretScanner:
                     raise TypeError("Confluence attachment response must be an object")
 
                 result.attachments_discovered += 1
-                attachment_id = str(raw_attachment.get("id", "unknown"))
+                try:
+                    attachment_id = self._content_id(
+                        raw_attachment,
+                        "attachment",
+                    )
+                except (KeyError, TypeError, ValueError):
+                    result.attachments_skipped += 1
+                    if self.continue_on_error:
+                        result.errors.append(
+                            ScanError(
+                                scope=f"page:{page.id}:attachment:unknown",
+                                message="invalid Confluence attachment response",
+                            )
+                        )
+                        continue
+                    raise
                 if not is_text_attachment(raw_attachment):
                     result.attachments_skipped += 1
                     continue
@@ -510,7 +504,9 @@ class SecretScanner:
         result.errors.append(
             ScanError(
                 scope="scan",
-                message="maximum scan runtime reached; remaining content was not scanned",
+                message=(
+                    "maximum scan runtime reached; remaining content was not scanned"
+                ),
             )
         )
         raise ScanLimitReached
@@ -540,10 +536,55 @@ class SecretScanner:
             result.mark_truncated("response_size")
         result.errors.append(ScanError(scope=scope, message=str(error)))
 
+    def _discover_spaces(self, result: ScanResult) -> List[Dict[str, Any]]:
+        if not self.include_space_keys:
+            spaces = []
+            for space in self.confluence.iter_spaces():
+                self._check_runtime(result)
+                self._space_key(space)
+                spaces.append(space)
+                result.spaces_discovered += 1
+            return spaces
+
+        spaces = []
+        for requested_key in self.include_space_keys:
+            self._check_runtime(result)
+            scope = f"space:{requested_key.casefold()}"
+            try:
+                space = self.confluence.get_space(requested_key)
+            except ConfluenceError as error:
+                self._record_confluence_error(result, scope, error)
+                continue
+
+            try:
+                returned_key = self._space_key(space)
+            except (TypeError, ValueError):
+                if not self.continue_on_error:
+                    raise
+                result.errors.append(
+                    ScanError(
+                        scope=scope,
+                        message="invalid Confluence space response",
+                    )
+                )
+                continue
+            if returned_key.casefold() != requested_key.casefold():
+                result.errors.append(
+                    ScanError(
+                        scope=scope,
+                        message="requested space was not returned by Confluence",
+                    )
+                )
+                continue
+
+            spaces.append(space)
+            result.spaces_discovered += 1
+        return spaces
+
     def _select_spaces(self, spaces: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         selected = []
         for space in spaces:
-            key = str(space.get("key", ""))
+            key = self._space_key(space)
             normalized_key = key.casefold()
             explicitly_included = normalized_key in self.include_spaces
 
@@ -568,7 +609,37 @@ class SecretScanner:
 
     @staticmethod
     def _normalized_keys(keys: Iterable[str]) -> Set[str]:
-        return {key.casefold() for key in keys if key}
+        return {key.strip().casefold() for key in keys if key.strip()}
+
+    @staticmethod
+    def _unique_keys(keys: Iterable[str]) -> Tuple[str, ...]:
+        unique: Dict[str, str] = {}
+        for key in keys:
+            if not isinstance(key, str):
+                raise ValueError("space keys must be strings")
+            normalized = key.strip().casefold()
+            if normalized:
+                unique.setdefault(normalized, key.strip())
+        return tuple(unique.values())
+
+    @staticmethod
+    def _space_key(space: Dict[str, Any]) -> str:
+        if not isinstance(space, dict):
+            raise TypeError("Confluence space response must be an object")
+        key = space.get("key")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("Confluence space key must be a non-empty string")
+        return key.strip()
+
+    @staticmethod
+    def _content_id(content: Dict[str, Any], label: str) -> str:
+        raw_id = content.get("id")
+        if raw_id is None:
+            raise ValueError(f"Confluence {label} id must not be null")
+        content_id = str(raw_id).strip()
+        if not content_id:
+            raise ValueError(f"Confluence {label} id must not be empty")
+        return content_id
 
     @staticmethod
     def _deduplicate(findings: Iterable[Finding]) -> List[Finding]:
@@ -600,13 +671,13 @@ class SecretScanner:
 
     @staticmethod
     def _storage_value(raw_content: Dict[str, Any]) -> str:
-        body = raw_content.get("body", {})
+        body = raw_content["body"]
         if not isinstance(body, dict):
             raise TypeError("Confluence content body must be an object")
-        storage = body.get("storage", {})
+        storage = body["storage"]
         if not isinstance(storage, dict):
             raise TypeError("Confluence storage body must be an object")
-        value = storage.get("value", "")
+        value = storage["value"]
         if not isinstance(value, str):
             raise TypeError("Confluence storage body must be a string")
         return value
@@ -616,15 +687,37 @@ class SecretScanner:
         raw_page: Dict[str, Any],
         storage_value: Optional[str] = None,
     ) -> Page:
-        page_id = str(raw_page["id"])
-        relative_url = raw_page.get("_links", {}).get("webui")
+        page_id = self._content_id(raw_page, "page")
+        title = raw_page.get("title", page_id)
+        if not isinstance(title, str):
+            raise TypeError("Confluence page title must be a string")
+        space = raw_page["space"]
+        if not isinstance(space, dict):
+            raise TypeError("Confluence page space must be an object")
+        space_key = self._space_key(space)
+        version_payload = raw_page["version"]
+        if not isinstance(version_payload, dict):
+            raise TypeError("Confluence page version must be an object")
+        version = version_payload["number"]
+        if type(version) is not int or version < 1:
+            raise ValueError("Confluence page version must be a positive integer")
+        links = raw_page.get("_links", {})
+        if not isinstance(links, dict):
+            raise TypeError("Confluence page links must be an object")
+        relative_url = links.get("webui")
+        if relative_url is not None and not isinstance(relative_url, str):
+            raise TypeError("Confluence page web URL must be a string")
         if storage_value is None:
             storage_value = self._storage_value(raw_page)
         return Page(
             id=page_id,
-            title=str(raw_page.get("title", page_id)),
-            space_key=str(raw_page.get("space", {}).get("key", "")),
-            version=int(raw_page.get("version", {}).get("number", 1)),
+            title=title,
+            space_key=space_key,
+            version=version,
             content=extract_text(storage_value),
-            web_url=self.confluence.absolute_url(relative_url) if relative_url else None,
+            web_url=(
+                self.confluence.absolute_url(relative_url)
+                if relative_url
+                else None
+            ),
         )

@@ -39,6 +39,8 @@ class Detector:
                 matches = self._finditer(rule.pattern, page.content)
                 for match in matches:
                     secret, start = self._secret_and_start(match)
+                    if not secret:
+                        continue
                     if self._is_allowlisted(rule, secret):
                         continue
                     if (

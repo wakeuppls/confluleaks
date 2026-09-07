@@ -239,7 +239,9 @@ confluleaks --include-personal-spaces --include-archived-spaces
 ```
 
 An explicitly selected `--space` is scanned even if it is personal or archived.
-The same key cannot be both included and excluded.
+Explicit keys are resolved through direct space lookups, so a scoped scan does
+not enumerate every space in a large installation. The same key cannot be both
+included and excluded.
 
 ### Page history
 
@@ -256,6 +258,8 @@ confluleaks --history-limit 5
 Passing `--history-limit` automatically enables history. Missing historical
 versions that return `404` are skipped. Identical findings across versions are
 collapsed and retain the list of matching version numbers.
+`--no-history` overrides history settings from `confluleaks.yaml`, including a
+configured `history_limit`.
 
 ### Comments
 
@@ -410,6 +414,10 @@ Supported fields:
 | `min_entropy` | no | Reject values below this Shannon entropy. |
 | `allowlist.regexes` | no | Case-insensitive patterns applied to the matched value. |
 | `allowlist.stopwords` | no | Case-insensitive substrings that suppress a match. |
+
+Rule files are validated strictly: unknown fields, non-finite numbers,
+non-boolean `require_context` values, empty-matching expressions, and non-string
+keyword or allowlist entries are rejected before a scan begins.
 
 Prefer a named `secret` capture group so only the credential value is
 fingerprinted. Alternatives may use groups named `secret_*`. Without either,

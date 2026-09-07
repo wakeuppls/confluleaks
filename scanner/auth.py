@@ -30,14 +30,19 @@ class ConfluenceAuth:
             raise AuthConfigurationError(
                 "a non-empty username is required for Basic authentication"
             )
-        if ":" in username:
+        normalized_username = username.strip()
+        if ":" in normalized_username:
             raise AuthConfigurationError(
                 "Basic authentication username must not contain ':'"
+            )
+        if "\r" in normalized_username or "\n" in normalized_username:
+            raise AuthConfigurationError(
+                "Basic authentication username must not contain newlines"
             )
         return cls(
             AuthMethod.BASIC,
             _validated_secret(password_or_token),
-            username=username,
+            username=normalized_username,
         )
 
     def apply(self, session: requests.Session) -> None:

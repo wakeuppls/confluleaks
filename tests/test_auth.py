@@ -53,6 +53,13 @@ class ConfluenceAuthTest(unittest.TestCase):
             ConfluenceAuth.basic("", "secret")
         with self.assertRaises(AuthConfigurationError):
             ConfluenceAuth.basic("user:name", "secret")
+        with self.assertRaises(AuthConfigurationError):
+            ConfluenceAuth.basic("user\nname", "secret")
+
+    def test_basic_username_is_trimmed(self):
+        auth = ConfluenceAuth.basic("  scanner@example.test  ", "secret")
+
+        self.assertEqual(auth.username, "scanner@example.test")
 
 
 if __name__ == "__main__":

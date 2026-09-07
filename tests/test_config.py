@@ -24,11 +24,11 @@ class ConfigurationTest(unittest.TestCase):
                 directory,
                 """
 version: 1
-url: https://confluence.example.test/confluence
-auth: BASIC
-rules: rules.yaml
+url: " https://confluence.example.test/confluence "
+auth: " BASIC "
+rules: " rules.yaml "
 baseline: state/baseline.json
-spaces: [ENG, OPS, ENG]
+spaces: [" ENG ", OPS, ENG]
 exclude_spaces: []
 comments: true
 page_size: 25
@@ -42,6 +42,10 @@ fail_on: high
             configuration = load_config(path)
 
         self.assertEqual(configuration.path, path)
+        self.assertEqual(
+            configuration.values["url"],
+            "https://confluence.example.test/confluence",
+        )
         self.assertEqual(configuration.values["auth"], "basic")
         self.assertEqual(configuration.values["spaces"], ["ENG", "OPS"])
         self.assertTrue(configuration.values["comments"])

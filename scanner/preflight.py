@@ -113,6 +113,14 @@ class PreflightChecker:
             result.add(name, "fail", str(error))
             return ""
 
+        if returned_key.casefold() != space_key.casefold():
+            result.add(
+                name,
+                "fail",
+                "Confluence returned a different space than requested",
+            )
+            return ""
+
         result.add(name, "pass", "space is visible to the configured account")
         return returned_key
 

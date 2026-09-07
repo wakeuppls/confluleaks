@@ -121,6 +121,16 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(result.checks[-1].name, "pages:ENG")
         self.assertEqual(result.checks[-1].status, "fail")
 
+    def test_requested_space_must_match_direct_lookup_response(self):
+        client = HealthyPreflightClient()
+        client.get_space = lambda space_key: {"key": "OTHER"}
+
+        result = PreflightChecker(client, space_keys=["ENG"]).run()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.checks[-1].name, "space:ENG")
+        self.assertEqual(result.checks[-1].status, "fail")
+
     def test_reports_are_machine_readable_and_source_safe(self):
         result = PreflightChecker(
             HealthyPreflightClient(),

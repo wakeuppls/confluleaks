@@ -1,4 +1,5 @@
 import json
+import math
 import time
 from typing import Any, Dict, Iterator, Optional
 from urllib.parse import quote, urlsplit
@@ -46,10 +47,18 @@ class ConfluenceClient:
             if token is None:
                 raise ValueError("authentication configuration is required")
             auth = ConfluenceAuth.bearer(token)
-        self.base_url = base_url.rstrip("/")
+        self.base_url = self._validated_base_url(base_url)
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be a positive finite number")
         self.timeout = timeout
         self.page_size = max(1, min(200, page_size))
-        self.request_delay = max(0.0, request_delay)
+        if not math.isfinite(request_delay) or request_delay < 0:
+            raise ValueError("request_delay must be a finite non-negative number")
+        self.request_delay = request_delay
+        if retries < 0:
+            raise ValueError("retries must not be negative")
+        if not math.isfinite(backoff) or backoff < 0:
+            raise ValueError("backoff must be a finite non-negative number")
         if max_response_bytes < 1:
             raise ValueError("max_response_bytes must be greater than zero")
         self.max_response_bytes = max_response_bytes
@@ -63,13 +72,13 @@ class ConfluenceClient:
         )
         auth.apply(self.session)
         retry_policy = Retry(
-            total=max(0, retries),
-            connect=max(0, retries),
-            read=max(0, retries),
-            status=max(0, retries),
+            total=retries,
+            connect=retries,
+            read=retries,
+            status=retries,
             allowed_methods=frozenset({"GET"}),
             status_forcelist=(429, 500, 502, 503, 504),
-            backoff_factor=max(0.0, backoff),
+            backoff_factor=backoff,
             respect_retry_after_header=True,
             raise_on_status=False,
         )
@@ -225,13 +234,18 @@ class ConfluenceClient:
         if max_bytes < 1:
             raise ValueError("max_bytes must be greater than zero")
 
-        attachment_id = str(attachment.get("id", ""))
+        raw_attachment_id = attachment.get("id")
+        attachment_id = (
+            str(raw_attachment_id).strip() if raw_attachment_id is not None else ""
+        )
         links = attachment.get("_links")
         if not isinstance(links, dict):
             links = {}
         download_link = links.get("download")
+        if download_link is not None and not isinstance(download_link, str):
+            raise ConfluenceError("attachment download link must be a string")
         if download_link:
-            endpoint = str(download_link)
+            endpoint = download_link
         elif attachment_id:
             encoded_page_id = quote(page_id, safe="")
             encoded_attachment_id = quote(attachment_id, safe="")
@@ -328,8 +342,17 @@ class ConfluenceClient:
             if not isinstance(results, list):
                 raise ConfluenceError(f"invalid paginated response from {endpoint}")
 
-            yield from results
-            next_link = payload.get("_links", {}).get("next")
+            for item in results:
+                if not isinstance(item, dict):
+                    raise ConfluenceError(
+                        f"invalid paginated item from {endpoint}"
+                    )
+                yield item
+
+            links = payload.get("_links", {})
+            if not isinstance(links, dict):
+                raise ConfluenceError(f"invalid pagination links from {endpoint}")
+            next_link = links.get("next")
             if not next_link or not results:
                 break
             start += len(results)
@@ -394,3 +417,21 @@ class ConfluenceClient:
             if remaining > 0:
                 time.sleep(remaining)
         self._last_request_at = time.monotonic()
+
+    @staticmethod
+    def _validated_base_url(base_url: str) -> str:
+        if not isinstance(base_url, str) or not base_url.strip():
+            raise ValueError("Confluence base URL must be a non-empty string")
+        normalized = base_url.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Confluence base URL must be an absolute HTTP(S) URL")
+        if parsed.username or parsed.password:
+            raise ValueError("Confluence base URL must not contain credentials")
+        if parsed.query or parsed.fragment:
+            raise ValueError("Confluence base URL must not contain a query or fragment")
+        try:
+            parsed.port
+        except ValueError as error:
+            raise ValueError("Confluence base URL contains an invalid port") from error
+        return normalized

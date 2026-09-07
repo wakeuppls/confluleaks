@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 import confluleaks
 import scanner
 from scanner.auth import AuthConfigurationError, AuthMethod
-from scanner.main import _load_auth, build_parser, main
+from scanner.main import _load_auth, _validate_arguments, build_parser, main
 from scanner.models import ScanResult
 from scanner.preflight import PreflightResult
 
@@ -87,6 +87,42 @@ class PublicCliTest(unittest.TestCase):
         self.assertEqual(args.max_findings, 10_000)
         self.assertEqual(args.max_findings_per_document, 1_000)
         self.assertEqual(args.max_runtime, 3_600.0)
+
+    def test_non_finite_cli_numbers_are_rejected(self):
+        invalid_options = (
+            ("--timeout", "nan"),
+            ("--backoff", "nan"),
+            ("--request-delay", "inf"),
+        )
+        for option, value in invalid_options:
+            with self.subTest(option=option), redirect_stderr(
+                StringIO()
+            ), self.assertRaises(SystemExit) as error:
+                main(
+                    [
+                        "--no-config",
+                        "--url",
+                        "https://confluence.example.test",
+                        option,
+                        value,
+                    ]
+                )
+            self.assertEqual(error.exception.code, 2)
+
+    def test_explicit_no_history_overrides_configured_history_limit(self):
+        parser = build_parser({"history_limit": 5})
+        args = parser.parse_args(["--no-history"])
+
+        _validate_arguments(parser, args)
+
+        self.assertFalse(args.history)
+        self.assertIsNone(args.history_limit)
+
+    def test_empty_space_key_is_rejected(self):
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+            build_parser().parse_args(["--space", "   "])
+
+        self.assertEqual(error.exception.code, 2)
 
     def test_preflight_bypasses_rules_and_returns_its_status(self):
         result = PreflightResult()

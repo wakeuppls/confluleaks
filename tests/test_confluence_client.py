@@ -78,6 +78,20 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
                 auth=ConfluenceAuth.bearer("explicit-token"),
             )
 
+    def test_rejects_unsafe_or_ambiguous_base_urls(self):
+        from scanner.confluence import ConfluenceClient
+
+        invalid_urls = (
+            "confluence.example.test",
+            "ftp://confluence.example.test",
+            "https://user:password@confluence.example.test",
+            "https://confluence.example.test?redirect=other",
+            "https://confluence.example.test#fragment",
+        )
+        for url in invalid_urls:
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                ConfluenceClient(url, "synthetic-token")
+
     def test_request_delay_spaces_request_start_times(self):
         from scanner.confluence import ConfluenceClient
 
@@ -199,6 +213,21 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
             client.session, "get", return_value=response
         ), self.assertRaises(ResponseTooLargeError):
             client.get_spaces()
+        client.close()
+
+    def test_paginated_collections_reject_non_object_items(self):
+        from scanner.confluence import ConfluenceClient, ConfluenceError
+
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            "synthetic-token",
+        )
+        with patch.object(
+            client,
+            "_get",
+            return_value={"results": ["not-an-object"], "_links": {}},
+        ), self.assertRaises(ConfluenceError):
+            list(client.iter_spaces())
         client.close()
 
 

@@ -39,6 +39,21 @@ class OverrideConfigAppendAction(argparse.Action):
         getattr(namespace, self.dest).append(value)
 
 
+class ExplicitBooleanOptionalAction(argparse.BooleanOptionalAction):
+    """Record that a Boolean option was explicitly supplied on the CLI."""
+
+    def __call__(self, parser, namespace, values, option_string=None) -> None:
+        super().__call__(parser, namespace, values, option_string)
+        setattr(namespace, f"_cli_explicit_{self.dest}", True)
+
+
+def _space_key_argument(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise argparse.ArgumentTypeError("space key must not be empty")
+    return normalized
+
+
 def build_parser(
     config_values: Optional[Mapping[str, Any]] = None,
 ) -> argparse.ArgumentParser:
@@ -102,6 +117,7 @@ def build_parser(
     parser.add_argument(
         "--space",
         action=OverrideConfigAppendAction,
+        type=_space_key_argument,
         default=list(setting("spaces", [])),
         metavar="KEY",
         help="scan only this space; can be repeated",
@@ -109,6 +125,7 @@ def build_parser(
     parser.add_argument(
         "--exclude-space",
         action=OverrideConfigAppendAction,
+        type=_space_key_argument,
         default=list(setting("exclude_spaces", [])),
         metavar="KEY",
         help="skip this space; can be repeated",
@@ -133,7 +150,7 @@ def build_parser(
     )
     parser.add_argument(
         "--history",
-        action=argparse.BooleanOptionalAction,
+        action=ExplicitBooleanOptionalAction,
         default=setting("history", False),
         help="scan historical page versions in addition to current content",
     )
@@ -267,54 +284,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("--preflight supports only text and json output")
     if args.preflight and args.write_baseline:
         parser.error("--write-baseline cannot be used with --preflight")
+    _validate_arguments(parser, args)
     try:
         auth = _load_auth(args.auth)
     except AuthConfigurationError as error:
         parser.error(str(error))
-    if args.page_size < 1:
-        parser.error("--page-size must be greater than zero")
-    if args.timeout <= 0:
-        parser.error("--timeout must be greater than zero")
-    if args.max_pages is not None and args.max_pages < 1:
-        parser.error("--max-pages must be greater than zero")
-    if args.retries < 0:
-        parser.error("--retries must not be negative")
-    if args.backoff < 0:
-        parser.error("--backoff must not be negative")
-    if args.request_delay < 0:
-        parser.error("--request-delay must not be negative")
-    if args.history_limit is not None and args.history_limit < 1:
-        parser.error("--history-limit must be greater than zero")
-    if (
-        not math.isfinite(args.max_attachment_size_mb)
-        or args.max_attachment_size_mb <= 0
-    ):
-        parser.error("--max-attachment-size-mb must be greater than zero")
-    if (
-        not math.isfinite(args.max_response_size_mb)
-        or args.max_response_size_mb <= 0
-    ):
-        parser.error("--max-response-size-mb must be greater than zero")
-    if (
-        not math.isfinite(args.max_document_size_mb)
-        or args.max_document_size_mb <= 0
-    ):
-        parser.error("--max-document-size-mb must be greater than zero")
-    if not math.isfinite(args.regex_timeout) or args.regex_timeout <= 0:
-        parser.error("--regex-timeout must be greater than zero")
-    if args.max_findings < 1:
-        parser.error("--max-findings must be greater than zero")
-    if args.max_findings_per_document < 1:
-        parser.error("--max-findings-per-document must be greater than zero")
-    if not math.isfinite(args.max_runtime) or args.max_runtime <= 0:
-        parser.error("--max-runtime must be greater than zero")
-    if args.history_limit is not None:
-        args.history = True
-    duplicate_space_filters = {
-        key.casefold() for key in args.space
-    } & {key.casefold() for key in args.exclude_space}
-    if duplicate_space_filters:
-        parser.error("the same space cannot be included and excluded")
 
     try:
         with ConfluenceClient(
@@ -424,6 +398,68 @@ def _load_auth(method: str) -> ConfluenceAuth:
             "CONFLUENCE_USERNAME is required for Basic authentication"
         )
     return ConfluenceAuth.basic(username, secret)
+
+
+def _validate_arguments(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+) -> None:
+    positive_integers = (
+        ("--page-size", args.page_size),
+        ("--max-pages", args.max_pages),
+        ("--history-limit", args.history_limit),
+        ("--max-findings", args.max_findings),
+        ("--max-findings-per-document", args.max_findings_per_document),
+    )
+    for option, value in positive_integers:
+        if value is not None and value < 1:
+            parser.error(f"{option} must be greater than zero")
+
+    if args.retries < 0:
+        parser.error("--retries must not be negative")
+
+    positive_numbers = (
+        ("--timeout", args.timeout),
+        ("--max-attachment-size-mb", args.max_attachment_size_mb),
+        ("--max-response-size-mb", args.max_response_size_mb),
+        ("--max-document-size-mb", args.max_document_size_mb),
+        ("--regex-timeout", args.regex_timeout),
+        ("--max-runtime", args.max_runtime),
+    )
+    for option, value in positive_numbers:
+        if not math.isfinite(value) or value <= 0:
+            parser.error(f"{option} must be a positive finite number")
+
+    nonnegative_numbers = (
+        ("--backoff", args.backoff),
+        ("--request-delay", args.request_delay),
+    )
+    for option, value in nonnegative_numbers:
+        if not math.isfinite(value) or value < 0:
+            parser.error(f"{option} must be a finite non-negative number")
+
+    history_was_disabled = (
+        getattr(args, "_cli_explicit_history", False) and not args.history
+    )
+    if history_was_disabled:
+        args.history_limit = None
+    elif args.history_limit is not None:
+        args.history = True
+
+    args.space = _unique_space_keys(args.space)
+    args.exclude_space = _unique_space_keys(args.exclude_space)
+    included_spaces = {key.casefold() for key in args.space}
+    excluded_spaces = {key.casefold() for key in args.exclude_space}
+    if included_spaces & excluded_spaces:
+        parser.error("the same space cannot be included and excluded")
+
+
+def _unique_space_keys(keys: Sequence[str]) -> list:
+    unique = {}
+    for key in keys:
+        normalized = key.strip()
+        unique.setdefault(normalized.casefold(), normalized)
+    return list(unique.values())
 
 
 if __name__ == "__main__":

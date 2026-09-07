@@ -79,6 +79,12 @@ class DetectorTest(unittest.TestCase):
 
         self.assertEqual(Detector([rule]).scan(page), [])
 
+    def test_empty_named_secret_is_ignored(self):
+        rule = make_rule(regex=r"token(?P<secret>.*?)end")
+        page = Page("1", "API", "ENG", 1, "tokenend")
+
+        self.assertEqual(Detector([rule]).scan(page), [])
+
     def test_allowlist_regex_and_stopword_are_applied_to_secret_only(self):
         regex_rule = make_rule(
             allowlist_patterns=(re.compile(r"^example-"),),

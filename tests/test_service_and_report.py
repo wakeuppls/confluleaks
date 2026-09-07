@@ -156,13 +156,36 @@ class ServiceAndReportTest(unittest.TestCase):
 class ScopeFakeConfluenceClient:
     def __init__(self, broken_space=None):
         self.requested_spaces = []
+        self.requested_space_metadata = []
+        self.space_list_requests = 0
         self.broken_space = broken_space
 
     def iter_spaces(self):
+        self.space_list_requests += 1
         yield {"key": "ENG", "type": "global", "status": "current"}
         yield {"key": "PUBLIC", "type": "global", "status": "current"}
         yield {"key": "OLD", "type": "global", "status": "archived"}
         yield {"key": "~bob", "type": "personal", "status": "current"}
+
+    def get_space(self, space_key):
+        self.requested_space_metadata.append(space_key)
+        spaces = {
+            "eng": {"key": "ENG", "type": "global", "status": "current"},
+            "public": {
+                "key": "PUBLIC",
+                "type": "global",
+                "status": "current",
+            },
+            "old": {"key": "OLD", "type": "global", "status": "archived"},
+            "~bob": {"key": "~bob", "type": "personal", "status": "current"},
+        }
+        try:
+            return spaces[space_key.casefold()]
+        except KeyError as error:
+            raise ConfluenceError(
+                "requested space was not returned by Confluence",
+                status_code=404,
+            ) from error
 
     def iter_pages(self, space_key=None):
         self.requested_spaces.append(space_key)
@@ -265,6 +288,29 @@ class AttachmentServiceTest(unittest.TestCase):
         )
         self.assertIn("Attachment: deployment.env (att-1)", text_output.getvalue())
         self.assertNotIn("attachment-secret", reports)
+
+    def test_attachment_without_id_is_reported_in_partial_mode(self):
+        client = AttachmentFakeConfluenceClient()
+        client.iter_attachments = lambda page_id: iter(
+            [
+                {
+                    "id": None,
+                    "title": "broken.txt",
+                    "metadata": {"mediaType": "text/plain"},
+                }
+            ]
+        )
+
+        result = SecretScanner(
+            client,
+            Detector([self.rule]),
+            include_attachments=True,
+            continue_on_error=True,
+        ).scan()
+
+        self.assertEqual(result.attachments_scanned, 0)
+        self.assertEqual(result.attachments_skipped, 1)
+        self.assertEqual(result.errors[0].scope, "page:10:attachment:unknown")
 
 
 class CommentFakeConfluenceClient(FakeConfluenceClient):
@@ -379,6 +425,8 @@ class ScopeTest(unittest.TestCase):
 
         self.assertEqual(result.spaces_scanned, 2)
         self.assertEqual(client.requested_spaces, ["OLD", "~bob"])
+        self.assertEqual(client.requested_space_metadata, ["OLD", "~bob"])
+        self.assertEqual(client.space_list_requests, 0)
 
     def test_exclude_space_and_max_pages_are_applied(self):
         client = ScopeFakeConfluenceClient()
@@ -419,6 +467,28 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(client.requested_spaces, ["ENG", "PUBLIC"])
         self.assertEqual(result.pages_scanned, 1)
         self.assertEqual(len(result.errors), 1)
+
+    def test_missing_storage_body_is_not_treated_as_clean_content(self):
+        client = ScopeFakeConfluenceClient()
+
+        def pages_without_storage(space_key=None):
+            yield {
+                "id": "broken-page",
+                "title": "Broken",
+                "space": {"key": space_key},
+                "version": {"number": 1},
+            }
+
+        client.iter_pages = pages_without_storage
+        result = SecretScanner(
+            client,
+            Detector([]),
+            include_spaces=["ENG"],
+            continue_on_error=True,
+        ).scan()
+
+        self.assertEqual(result.pages_scanned, 0)
+        self.assertEqual(result.errors[0].scope, "page:broken-page")
 
 
 class GuardrailFakeConfluenceClient(FakeConfluenceClient):

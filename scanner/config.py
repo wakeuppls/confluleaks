@@ -159,13 +159,13 @@ def _validated_value(name: str, value: Any, directory: Path) -> Any:
             raise ConfigurationError(
                 f"configuration field {name} must be a non-empty string"
             )
-        return value
+        return value.strip()
     if name in PATH_FIELDS:
         if not isinstance(value, str) or not value.strip():
             raise ConfigurationError(
                 f"configuration field {name} must be a non-empty path string"
             )
-        configured_path = Path(value).expanduser()
+        configured_path = Path(value.strip()).expanduser()
         if not configured_path.is_absolute():
             configured_path = directory / configured_path
         return configured_path
@@ -176,11 +176,12 @@ def _validated_value(name: str, value: Any, directory: Path) -> Any:
             raise ConfigurationError(
                 f"configuration field {name} must be a list of non-empty strings"
             )
-        return list(dict.fromkeys(value))
+        normalized_items = (item.strip() for item in value)
+        return list(dict.fromkeys(normalized_items))
     if name in CHOICE_FIELDS:
         if not isinstance(value, str):
             raise ConfigurationError(f"configuration field {name} must be a string")
-        normalized = value.casefold()
+        normalized = value.strip().casefold()
         if normalized not in CHOICE_FIELDS[name]:
             choices = ", ".join(sorted(CHOICE_FIELDS[name]))
             raise ConfigurationError(

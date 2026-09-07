@@ -63,6 +63,37 @@ rules:
             with self.assertRaisesRegex(RuleConfigurationError, "duplicate rule id"):
                 load_rules(path)
 
+    def test_rejects_ambiguous_or_non_finite_rule_settings(self):
+        from scanner.rules import RuleConfigurationError, load_rules
+
+        invalid_settings = (
+            "confidence: .nan",
+            "require_context: 'false'",
+            "require_context: true",
+            "context_radius: 1.5",
+            "unexpected_setting: true",
+            "regex: '(?:)'",
+            "allowlist:\n      regexes: ['(?:)']",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rules.yaml"
+            for setting in invalid_settings:
+                with self.subTest(setting=setting):
+                    regex_line = (
+                        "" if setting.startswith("regex:") else "    regex: token\n"
+                    )
+                    content = (
+                        "rules:\n"
+                        "  - id: strict-rule\n"
+                        "    severity: high\n"
+                        f"{regex_line}"
+                        f"    {setting}\n"
+                    )
+                    path.write_text(content, encoding="utf-8")
+
+                    with self.assertRaises(RuleConfigurationError):
+                        load_rules(path)
+
 
 if __name__ == "__main__":
     unittest.main()
