@@ -106,6 +106,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip attachments larger than this many MiB (default: 5)",
     )
     parser.add_argument(
+        "--max-response-size-mb",
+        type=float,
+        default=16.0,
+        metavar="MB",
+        help="abort a REST response larger than this many MiB (default: 16)",
+    )
+    parser.add_argument(
+        "--max-document-size-mb",
+        type=float,
+        default=5.0,
+        metavar="MB",
+        help="skip extracted documents larger than this many MiB (default: 5)",
+    )
+    parser.add_argument(
+        "--regex-timeout",
+        type=float,
+        default=0.25,
+        metavar="SECONDS",
+        help="timeout for each regex operation (default: 0.25)",
+    )
+    parser.add_argument(
+        "--max-findings",
+        type=int,
+        default=10_000,
+        metavar="N",
+        help="stop after retaining this many findings (default: 10000)",
+    )
+    parser.add_argument(
+        "--max-findings-per-document",
+        type=int,
+        default=1_000,
+        metavar="N",
+        help="retain at most this many findings per document (default: 1000)",
+    )
+    parser.add_argument(
+        "--max-runtime",
+        type=float,
+        default=3_600.0,
+        metavar="SECONDS",
+        help="soft total scan runtime limit (default: 3600)",
+    )
+    parser.add_argument(
         "--continue-on-error",
         action="store_true",
         help="continue other spaces/pages after a recoverable request error",
@@ -166,6 +208,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         or args.max_attachment_size_mb <= 0
     ):
         parser.error("--max-attachment-size-mb must be greater than zero")
+    if (
+        not math.isfinite(args.max_response_size_mb)
+        or args.max_response_size_mb <= 0
+    ):
+        parser.error("--max-response-size-mb must be greater than zero")
+    if (
+        not math.isfinite(args.max_document_size_mb)
+        or args.max_document_size_mb <= 0
+    ):
+        parser.error("--max-document-size-mb must be greater than zero")
+    if not math.isfinite(args.regex_timeout) or args.regex_timeout <= 0:
+        parser.error("--regex-timeout must be greater than zero")
+    if args.max_findings < 1:
+        parser.error("--max-findings must be greater than zero")
+    if args.max_findings_per_document < 1:
+        parser.error("--max-findings-per-document must be greater than zero")
+    if not math.isfinite(args.max_runtime) or args.max_runtime <= 0:
+        parser.error("--max-runtime must be greater than zero")
     if args.history_limit is not None:
         args.history = True
     duplicate_space_filters = {
@@ -185,10 +245,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             retries=args.retries,
             backoff=args.backoff,
             request_delay=args.request_delay,
+            max_response_bytes=max(
+                1,
+                int(args.max_response_size_mb * 1024 * 1024),
+            ),
         ) as client:
             result = SecretScanner(
                 client,
-                Detector(rules),
+                Detector(rules, regex_timeout=args.regex_timeout),
                 include_history=args.history,
                 history_limit=args.history_limit,
                 include_spaces=args.space,
@@ -203,6 +267,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     1,
                     int(args.max_attachment_size_mb * 1024 * 1024),
                 ),
+                max_document_bytes=max(
+                    1,
+                    int(args.max_document_size_mb * 1024 * 1024),
+                ),
+                max_findings=args.max_findings,
+                max_findings_per_document=args.max_findings_per_document,
+                max_runtime_seconds=args.max_runtime,
             ).scan()
 
         observed_findings = tuple(result.findings)
@@ -232,7 +303,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         write_text_report(result, sys.stdout)
 
-    if result.errors:
+    if result.errors or result.truncated:
         return 1
     if args.fail_on:
         threshold = Severity(args.fail_on).rank

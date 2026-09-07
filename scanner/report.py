@@ -11,6 +11,7 @@ def write_text_report(result: ScanResult, stream: TextIO) -> None:
     stream.write("Scanned:\n")
     stream.write(f"  Spaces discovered: {result.spaces_discovered}\n")
     stream.write(f"  Spaces: {result.spaces_scanned}\n")
+    stream.write(f"  Pages discovered: {result.pages_discovered}\n")
     stream.write(f"  Pages: {result.pages_scanned}\n")
     stream.write(f"  Versions: {result.versions_scanned}\n")
     stream.write(f"  Historical versions: {result.historical_versions_scanned}\n")
@@ -20,12 +21,18 @@ def write_text_report(result: ScanResult, stream: TextIO) -> None:
     stream.write(f"  Attachments scanned: {result.attachments_scanned}\n")
     stream.write(f"  Attachments skipped: {result.attachments_skipped}\n")
     stream.write(f"  Attachment bytes: {result.attachment_bytes_scanned}\n\n")
+    if result.documents_skipped_too_large:
+        stream.write(
+            "Documents skipped because of size: "
+            f"{result.documents_skipped_too_large}\n\n"
+        )
     if result.findings_suppressed:
         stream.write(
             f"Known findings suppressed by baseline: {result.findings_suppressed}\n\n"
         )
     if result.truncated:
-        stream.write("  Result truncated by --max-pages\n\n")
+        reasons = ", ".join(result.truncation_reasons) or "unspecified"
+        stream.write(f"Result incomplete: {reasons}\n\n")
     stream.write("Findings:\n")
     for severity in reversed(list(Severity)):
         label = f"{severity.value.capitalize()}:"

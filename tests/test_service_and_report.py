@@ -3,8 +3,8 @@ import json
 import re
 import unittest
 
-from scanner.detector import Detector
-from scanner.confluence import ConfluenceError
+from scanner.confluence import ConfluenceError, ResponseTooLargeError
+from scanner.detector import DetectionTimeoutError, Detector
 from scanner.models import Rule, Severity
 from scanner.report import write_json_report, write_text_report
 from scanner.service import SecretScanner
@@ -99,6 +99,7 @@ class ServiceAndReportTest(unittest.TestCase):
             {
                 "spaces": 1,
                 "spaces_discovered": 1,
+                "pages_discovered": 1,
                 "pages": 1,
                 "versions": 1,
                 "historical_versions": 0,
@@ -108,11 +109,13 @@ class ServiceAndReportTest(unittest.TestCase):
                 "attachments": 0,
                 "attachments_skipped": 0,
                 "attachment_bytes": 0,
+                "documents_skipped_too_large": 0,
             },
         )
         self.assertEqual(payload["finding_counts"]["high"], 1)
         self.assertEqual(payload["baseline"], {"suppressed_findings": 0})
         self.assertFalse(payload["truncated"])
+        self.assertEqual(payload["truncation_reasons"], [])
         self.assertEqual(payload["errors"], [])
         self.assertNotIn("secret-value", output.getvalue())
 
@@ -235,6 +238,8 @@ class AttachmentServiceTest(unittest.TestCase):
         self.assertEqual(result.attachments_scanned, 1)
         self.assertEqual(result.attachments_skipped, 2)
         self.assertEqual(result.attachment_bytes_scanned, 26)
+        self.assertEqual(result.truncation_reasons, ["attachment_size"])
+        self.assertEqual(len(result.errors), 1)
         self.assertEqual(len(result.findings), 2)
         attachment_finding = next(
             finding for finding in result.findings if finding.attachment_id
@@ -387,7 +392,9 @@ class ScopeTest(unittest.TestCase):
         ).scan()
 
         self.assertEqual(result.pages_scanned, 1)
+        self.assertEqual(result.pages_discovered, 2)
         self.assertTrue(result.truncated)
+        self.assertEqual(result.truncation_reasons, ["max_pages"])
         self.assertEqual(client.requested_spaces, ["ENG", "OLD"])
 
     def test_missing_requested_space_is_reported(self):
@@ -412,6 +419,117 @@ class ScopeTest(unittest.TestCase):
         self.assertEqual(client.requested_spaces, ["ENG", "PUBLIC"])
         self.assertEqual(result.pages_scanned, 1)
         self.assertEqual(len(result.errors), 1)
+
+
+class GuardrailFakeConfluenceClient(FakeConfluenceClient):
+    def __init__(self, page_body=None, page_error=None):
+        self.page_body = page_body
+        self.page_error = page_error
+
+    def iter_pages(self, space_key=None):
+        if self.page_error:
+            raise self.page_error
+        page = next(super().iter_pages(space_key))
+        if self.page_body is not None:
+            page["body"]["storage"]["value"] = self.page_body
+        yield page
+
+
+class TimeoutDetector:
+    def scan_bounded(self, page, max_findings=None):
+        raise DetectionTimeoutError("slow-rule")
+
+
+class GuardrailTest(unittest.TestCase):
+    def setUp(self):
+        regex = r"password=(?P<secret>\S+)"
+        rule = Rule(
+            id="password",
+            name="Password",
+            severity=Severity.HIGH,
+            regex=regex,
+            pattern=re.compile(regex),
+            confidence=0.9,
+        )
+        self.detector = Detector([rule])
+
+    def test_oversized_document_is_skipped_and_marks_result_partial(self):
+        result = SecretScanner(
+            GuardrailFakeConfluenceClient(page_body="x" * 32),
+            self.detector,
+            max_document_bytes=16,
+        ).scan()
+
+        self.assertEqual(result.pages_discovered, 1)
+        self.assertEqual(result.pages_scanned, 0)
+        self.assertEqual(result.documents_skipped_too_large, 1)
+        self.assertEqual(result.truncation_reasons, ["document_size"])
+        self.assertEqual(result.errors[0].scope, "page:10")
+
+    def test_per_document_finding_limit_omits_matches_but_continues(self):
+        body = "<p>password=one</p><p>password=two</p>"
+
+        result = SecretScanner(
+            GuardrailFakeConfluenceClient(page_body=body),
+            self.detector,
+            max_findings=10,
+            max_findings_per_document=1,
+        ).scan()
+
+        self.assertEqual(len(result.findings), 1)
+        self.assertEqual(
+            result.truncation_reasons,
+            ["max_findings_per_document"],
+        )
+        self.assertIn("matches were omitted", result.errors[0].message)
+
+    def test_global_finding_limit_stops_scan(self):
+        body = "<p>password=one</p><p>password=two</p>"
+
+        result = SecretScanner(
+            GuardrailFakeConfluenceClient(page_body=body),
+            self.detector,
+            max_findings=1,
+            max_findings_per_document=10,
+        ).scan()
+
+        self.assertEqual(len(result.findings), 1)
+        self.assertEqual(result.truncation_reasons, ["max_findings"])
+
+    def test_regex_timeout_skips_document_and_marks_result_partial(self):
+        result = SecretScanner(
+            GuardrailFakeConfluenceClient(),
+            TimeoutDetector(),
+        ).scan()
+
+        self.assertEqual(result.findings, [])
+        self.assertEqual(result.truncation_reasons, ["regex_timeout"])
+        self.assertIn("slow-rule", result.errors[0].message)
+
+    def test_runtime_budget_stops_between_scan_units(self):
+        ticks = iter((0.0, 0.0, 2.0))
+
+        result = SecretScanner(
+            GuardrailFakeConfluenceClient(),
+            self.detector,
+            max_runtime_seconds=1.0,
+            clock=lambda: next(ticks),
+        ).scan()
+
+        self.assertEqual(result.pages_discovered, 0)
+        self.assertEqual(result.truncation_reasons, ["max_runtime"])
+        self.assertEqual(result.errors[0].scope, "scan")
+
+    def test_oversized_rest_response_is_a_partial_result(self):
+        error = ResponseTooLargeError("synthetic oversized response")
+
+        result = SecretScanner(
+            GuardrailFakeConfluenceClient(page_error=error),
+            self.detector,
+        ).scan()
+
+        self.assertEqual(result.truncation_reasons, ["response_size"])
+        self.assertEqual(result.errors[0].scope, "space:ENG")
 
 
 if __name__ == "__main__":

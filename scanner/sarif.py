@@ -52,10 +52,11 @@ def build_sarif(result: ScanResult) -> Dict[str, Any]:
         )
 
     invocation: Dict[str, Any] = {
-        "executionSuccessful": not result.errors,
+        "executionSuccessful": not result.errors and not result.truncated,
         "properties": {
             "scanSummary": result.to_dict()["scanned"],
             "truncated": result.truncated,
+            "truncationReasons": list(result.truncation_reasons),
             "baselineSuppressedFindings": result.findings_suppressed,
         },
     }

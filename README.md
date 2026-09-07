@@ -25,6 +25,8 @@ baseline output.
 - rule-specific context, entropy thresholds, allowlists, and stopwords;
 - deduplication of the same finding across page versions;
 - retry/backoff for rate limits and transient server failures;
+- bounded REST responses, document sizes, regex execution, finding counts, and
+  total runtime for safer operation on large installations;
 - text, JSON, and SARIF 2.1.0 reports;
 - versioned baselines for suppressing reviewed findings;
 - CI-friendly exit codes.
@@ -91,8 +93,9 @@ Start with a small, current-page-only scan:
 confluleaks --space ENG --max-pages 100
 ```
 
-`--max-pages` intentionally truncates the result and marks it as truncated. It
-is useful for evaluation, but a truncated result cannot be written as a
+If `--max-pages` prevents the scanner from processing another discovered page,
+the result is marked as incomplete and the process exits with code `1`. This is
+useful for evaluation, but an incomplete result cannot be written as a
 baseline.
 
 After reviewing the initial behavior, expand the scope deliberately:
@@ -177,6 +180,7 @@ Supported extensions are `.cfg`, `.conf`, `.csv`, `.env`, `.ini`, `.js`,
 An explicit binary MIME type takes precedence over a text-looking filename.
 Declared and actually downloaded bytes are both checked against the limit.
 Cross-origin attachment links are rejected before a request is made.
+Skipping an oversized supported attachment marks the scan as incomplete.
 
 ## Reports and exit codes
 
@@ -214,7 +218,7 @@ confluleaks --format sarif --fail-on high > confluence-results.sarif
 | Exit code | Meaning |
 | --- | --- |
 | `0` | Scan completed and no unsuppressed finding reached `--fail-on`. |
-| `1` | Configuration, baseline, or Confluence error; also returned for a partial `--continue-on-error` result. |
+| `1` | Configuration, baseline, or Confluence error; also returned for any incomplete result caused by an operational guardrail or `--continue-on-error`. |
 | `2` | At least one unsuppressed finding reached the configured severity threshold. |
 
 Critical findings satisfy every threshold. Severity order is `low`, `medium`,
@@ -254,7 +258,8 @@ titles, or raw secret fingerprints.
 Identity is stable across page renames, new page versions, and line movement.
 The same match on another page or attachment is treated as new. Baselines are
 written atomically with owner-only permissions (`0600`). Writing is refused if
-the result contains errors or was truncated by `--max-pages`.
+the result contains errors or was made incomplete by any operational
+guardrail.
 
 Keep the selected scope consistent. A successful but intentionally narrow scan
 is complete for that scope and can therefore replace a broader baseline if the
@@ -338,6 +343,32 @@ confluleaks \
 other spaces or pages. The report remains partial and the process exits with
 code `1`.
 
+### Large-installation guardrails
+
+The scanner applies conservative limits by default so an unexpectedly large
+page, response, pathological rule, or finding storm cannot consume memory and
+CPU without a bound.
+
+| Option | Default | Behavior when reached |
+| --- | ---: | --- |
+| `--max-response-size-mb` | 16 MiB | Abort that streamed REST response before retaining more bytes. |
+| `--max-document-size-mb` | 5 MiB | Skip that page, version, comment, or decoded attachment. |
+| `--regex-timeout` | 0.25 s | Bound each regex operation; on timeout, stop the rule and skip the rest of that document. |
+| `--max-findings-per-document` | 1,000 | Retain the first matches and omit the rest from that document. |
+| `--max-findings` | 10,000 | Stop the entire scan once additional matches are observed. |
+| `--max-runtime` | 3,600 s | Stop between scan units after the soft wall-clock budget expires. |
+
+The attachment download limit is controlled separately by
+`--max-attachment-size-mb` and has the same incomplete-result semantics. The
+runtime limit is soft: a single HTTP request can run until `--timeout`, and a
+single regex operation can run until `--regex-timeout` before the
+total-runtime check runs again.
+
+Every triggered guardrail sets `truncated: true`, records a stable identifier
+in `truncation_reasons` in JSON and SARIF, and returns exit code `1`. Text output
+prints the reasons as `Result incomplete`. This prevents a bounded scan from
+being mistaken for a clean complete scan or used to write a baseline.
+
 ## Command reference
 
 Run `confluleaks --help` for the authoritative CLI help.
@@ -363,6 +394,13 @@ confluleaks [OPTIONS]
 --comments                   scan current page comments
 --attachments                scan supported text attachments
 --max-attachment-size-mb MB  attachment limit (default: 5 MiB)
+--max-response-size-mb MB    REST response limit (default: 16 MiB)
+--max-document-size-mb MB    content body limit (default: 5 MiB)
+--regex-timeout SECONDS      per-operation regex timeout (default: 0.25)
+--max-findings N             global finding limit (default: 10000)
+--max-findings-per-document N
+                             per-document finding limit (default: 1000)
+--max-runtime SECONDS        soft scan runtime limit (default: 3600)
 
 --continue-on-error          emit a partial result and continue
 --retries N                  transient request retries (default: 3)
@@ -380,14 +418,14 @@ confluleaks [OPTIONS]
 Confluence REST API
         │
         ▼
-ConfluenceClient ── pagination / retry / throttling / download limits
+ConfluenceClient ── pagination / retry / throttling / response limits
         │
         ▼
 SecretScanner ──── scope / current pages / history / comments / attachments
         │
         ├── HTML and text extraction
         ▼
-Detector ───────── regex / context / entropy / allowlists
+Detector ───────── bounded regex / context / entropy / allowlists
         │
         ▼
 deduplicated Findings
@@ -433,8 +471,8 @@ python -m compileall -q confluleaks scanner tests
 
 The tests cover extraction, rules, context and entropy filtering, report
 redaction, history deduplication, comment scanning, attachment classification
-and limits, retry configuration, SARIF structure, baseline stability, and
-partial-error behavior.
+and limits, response/document/finding/runtime guardrails, regex timeouts, retry
+configuration, SARIF structure, baseline stability, and partial-error behavior.
 
 ## Repository layout
 
@@ -490,5 +528,4 @@ small steps:
 - modified-since or CQL-based incremental scans;
 - issue-tracker integration;
 - packaging, release versioning, and CI configuration;
-- further performance and operational hardening before unattended corporate
-  runs.
+- bounded concurrency and structured operational metrics.

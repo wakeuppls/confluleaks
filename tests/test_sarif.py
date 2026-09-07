@@ -131,6 +131,7 @@ class SarifReportTest(unittest.TestCase):
         self.assertNotIn("do-not-print-me", output.getvalue())
 
     def test_partial_scan_errors_are_tool_notifications(self):
+        self.result.mark_truncated("response_size")
         self.result.errors.append(
             ScanError(scope="space:OPS", message="synthetic request failure")
         )
@@ -138,6 +139,11 @@ class SarifReportTest(unittest.TestCase):
         invocation = build_sarif(self.result)["runs"][0]["invocations"][0]
 
         self.assertFalse(invocation["executionSuccessful"])
+        self.assertTrue(invocation["properties"]["truncated"])
+        self.assertEqual(
+            invocation["properties"]["truncationReasons"],
+            ["response_size"],
+        )
         self.assertEqual(
             invocation["toolExecutionNotifications"][0]["message"]["text"],
             "[space:OPS] synthetic request failure",
@@ -200,6 +206,18 @@ class SarifReportTest(unittest.TestCase):
         self.assertEqual(run["results"], [])
         self.assertNotIn("artifacts", run)
         self.assertTrue(run["invocations"][0]["executionSuccessful"])
+
+    def test_truncated_scan_is_not_reported_as_successful(self):
+        result = ScanResult()
+        result.mark_truncated("max_pages")
+
+        invocation = build_sarif(result)["runs"][0]["invocations"][0]
+
+        self.assertFalse(invocation["executionSuccessful"])
+        self.assertEqual(
+            invocation["properties"]["truncationReasons"],
+            ["max_pages"],
+        )
 
 
 if __name__ == "__main__":

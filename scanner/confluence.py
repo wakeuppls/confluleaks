@@ -1,3 +1,4 @@
+import json
 import time
 from typing import Any, Dict, Iterator, Optional
 from urllib.parse import urlsplit
@@ -21,6 +22,10 @@ class AttachmentTooLargeError(RuntimeError):
     """An attachment exceeded the configured in-memory download limit."""
 
 
+class ResponseTooLargeError(ConfluenceError):
+    """A REST response exceeded the configured in-memory limit."""
+
+
 class ConfluenceClient:
     def __init__(
         self,
@@ -31,11 +36,15 @@ class ConfluenceClient:
         retries: int = 3,
         backoff: float = 0.5,
         request_delay: float = 0.0,
+        max_response_bytes: int = 16 * 1024 * 1024,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.page_size = max(1, min(200, page_size))
         self.request_delay = max(0.0, request_delay)
+        if max_response_bytes < 1:
+            raise ValueError("max_response_bytes must be greater than zero")
+        self.max_response_bytes = max_response_bytes
         self._last_request_at: Optional[float] = None
         self.session = requests.Session()
         self.session.headers.update(
@@ -279,9 +288,39 @@ class ConfluenceClient:
         url = self.absolute_url(endpoint)
         try:
             self._wait_before_request()
-            response = self.session.get(url, params=params, timeout=self.timeout)
-            response.raise_for_status()
-            payload = response.json()
+            with self.session.get(
+                url,
+                params=params,
+                timeout=self.timeout,
+                stream=True,
+            ) as response:
+                response.raise_for_status()
+                declared_size = response.headers.get("Content-Length")
+                if declared_size is not None:
+                    try:
+                        if int(declared_size) > self.max_response_bytes:
+                            raise ResponseTooLargeError(
+                                "Confluence response exceeds the configured "
+                                f"size limit: {url}"
+                            )
+                    except ValueError:
+                        pass
+
+                chunks = []
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    downloaded += len(chunk)
+                    if downloaded > self.max_response_bytes:
+                        raise ResponseTooLargeError(
+                            "Confluence response exceeds the configured "
+                            f"size limit: {url}"
+                        )
+                    chunks.append(chunk)
+                payload = json.loads(b"".join(chunks))
+        except ResponseTooLargeError:
+            raise
         except requests.RequestException as error:
             status = getattr(error.response, "status_code", None)
             suffix = f" (HTTP {status})" if status else ""

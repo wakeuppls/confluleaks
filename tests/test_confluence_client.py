@@ -8,6 +8,26 @@ except ModuleNotFoundError:
     requests = None
 
 
+class FakeStreamingResponse:
+    def __init__(self, content, declared_size=None):
+        self.content = content
+        self.headers = {}
+        if declared_size is not None:
+            self.headers["Content-Length"] = str(declared_size)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return None
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size):
+        yield self.content
+
+
 @unittest.skipIf(requests is None, "HTTP dependencies are not installed")
 class ConfluenceClientConfigurationTest(unittest.TestCase):
     def test_retry_policy_covers_rate_limits_and_transient_server_errors(self):
@@ -95,6 +115,38 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
                 "location": ("footer", "inline", "resolved"),
             },
         )
+
+    def test_declared_oversized_rest_response_is_rejected(self):
+        from scanner.confluence import ConfluenceClient, ResponseTooLargeError
+
+        response = FakeStreamingResponse(b"{}", declared_size=100)
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            "synthetic-token",
+            max_response_bytes=10,
+        )
+
+        with patch.object(
+            client.session, "get", return_value=response
+        ), self.assertRaises(ResponseTooLargeError):
+            client.get_spaces()
+        client.close()
+
+    def test_streamed_oversized_rest_response_is_rejected(self):
+        from scanner.confluence import ConfluenceClient, ResponseTooLargeError
+
+        response = FakeStreamingResponse(b'{"results": []}')
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            "synthetic-token",
+            max_response_bytes=5,
+        )
+
+        with patch.object(
+            client.session, "get", return_value=response
+        ), self.assertRaises(ResponseTooLargeError):
+            client.get_spaces()
+        client.close()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import re
 import unittest
 
-from scanner.detector import Detector
+from scanner.detector import DetectionTimeoutError, Detector
 from scanner.models import Page, Rule, Severity
 
 
@@ -16,7 +16,7 @@ def make_rule(**overrides):
         "require_context": False,
     }
     values.update(overrides)
-    values["pattern"] = re.compile(values["regex"])
+    values.setdefault("pattern", re.compile(values["regex"]))
     return Rule(**values)
 
 
@@ -100,6 +100,38 @@ class DetectorTest(unittest.TestCase):
         page = Page("1", "API", "ENG", 1, "token          ABCDEF123456")
 
         self.assertEqual(Detector([rule]).scan(page), [])
+
+    def test_bounded_scan_reports_omitted_matches(self):
+        page = Page(
+            "1",
+            "Many",
+            "ENG",
+            1,
+            "password=one\npassword=two\npassword=three",
+        )
+
+        findings, omitted = Detector([make_rule()]).scan_bounded(
+            page,
+            max_findings=2,
+        )
+
+        self.assertEqual(len(findings), 2)
+        self.assertTrue(omitted)
+
+    def test_rule_timeout_is_wrapped_without_exposing_content(self):
+        class TimeoutPattern:
+            groupindex = {}
+
+            def finditer(self, content, timeout=None):
+                raise TimeoutError("secret source content")
+
+        detector = Detector([make_rule(pattern=TimeoutPattern())])
+
+        with self.assertRaises(DetectionTimeoutError) as error:
+            detector.scan(self.page)
+
+        self.assertIn("password", str(error.exception))
+        self.assertNotIn("secret source content", str(error.exception))
 
 
 if __name__ == "__main__":

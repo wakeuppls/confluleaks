@@ -1,10 +1,12 @@
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from unittest.mock import MagicMock, Mock, patch
 
 import confluleaks
 import scanner
-from scanner.main import build_parser
+from scanner.main import build_parser, main
+from scanner.models import ScanResult
 
 
 class PublicCliTest(unittest.TestCase):
@@ -29,6 +31,36 @@ class PublicCliTest(unittest.TestCase):
 
         self.assertFalse(parser.parse_args([]).comments)
         self.assertTrue(parser.parse_args(["--comments"]).comments)
+
+    def test_large_installation_guardrail_defaults(self):
+        args = build_parser().parse_args([])
+
+        self.assertEqual(args.max_response_size_mb, 16.0)
+        self.assertEqual(args.max_document_size_mb, 5.0)
+        self.assertEqual(args.regex_timeout, 0.25)
+        self.assertEqual(args.max_findings, 10_000)
+        self.assertEqual(args.max_findings_per_document, 1_000)
+        self.assertEqual(args.max_runtime, 3_600.0)
+
+    def test_truncated_result_returns_operational_error(self):
+        result = ScanResult()
+        result.mark_truncated("max_pages")
+        scanner = Mock()
+        scanner.scan.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+
+        with patch.dict(
+            "os.environ",
+            {"CONFLUENCE_TOKEN": "synthetic-token"},
+        ), patch("scanner.main.load_rules", return_value=[]), patch(
+            "scanner.main.ConfluenceClient", return_value=client
+        ), patch("scanner.main.SecretScanner", return_value=scanner), redirect_stdout(
+            StringIO()
+        ):
+            exit_code = main(["--url", "https://confluence.example.test"])
+
+        self.assertEqual(exit_code, 1)
 
 
 if __name__ == "__main__":

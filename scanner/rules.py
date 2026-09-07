@@ -1,7 +1,7 @@
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import regex as re
 import yaml
 
 from scanner.models import Rule, Severity

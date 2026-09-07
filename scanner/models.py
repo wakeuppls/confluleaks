@@ -116,6 +116,7 @@ class ScanError:
 class ScanResult:
     spaces_discovered: int = 0
     spaces_scanned: int = 0
+    pages_discovered: int = 0
     pages_scanned: int = 0
     versions_scanned: int = 0
     historical_versions_scanned: int = 0
@@ -125,10 +126,17 @@ class ScanResult:
     attachments_scanned: int = 0
     attachments_skipped: int = 0
     attachment_bytes_scanned: int = 0
+    documents_skipped_too_large: int = 0
     findings_suppressed: int = 0
     findings: List[Finding] = field(default_factory=list)
     errors: List[ScanError] = field(default_factory=list)
     truncated: bool = False
+    truncation_reasons: List[str] = field(default_factory=list)
+
+    def mark_truncated(self, reason: str) -> None:
+        self.truncated = True
+        if reason not in self.truncation_reasons:
+            self.truncation_reasons.append(reason)
 
     def counts_by_severity(self) -> Dict[str, int]:
         counts = {severity.value: 0 for severity in Severity}
@@ -141,6 +149,7 @@ class ScanResult:
             "scanned": {
                 "spaces_discovered": self.spaces_discovered,
                 "spaces": self.spaces_scanned,
+                "pages_discovered": self.pages_discovered,
                 "pages": self.pages_scanned,
                 "versions": self.versions_scanned,
                 "historical_versions": self.historical_versions_scanned,
@@ -150,8 +159,10 @@ class ScanResult:
                 "attachments": self.attachments_scanned,
                 "attachments_skipped": self.attachments_skipped,
                 "attachment_bytes": self.attachment_bytes_scanned,
+                "documents_skipped_too_large": self.documents_skipped_too_large,
             },
             "truncated": self.truncated,
+            "truncation_reasons": list(self.truncation_reasons),
             "finding_counts": self.counts_by_severity(),
             "baseline": {"suppressed_findings": self.findings_suppressed},
             "findings": [finding.to_dict() for finding in self.findings],
