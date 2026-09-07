@@ -21,6 +21,7 @@ baseline output.
 - optional scanning of current footer, inline, and resolved comments;
 - optional scanning of supported text attachments with a hard size limit;
 - Bearer token and HTTP Basic authentication;
+- versioned YAML configuration with strict validation and CLI overrides;
 - read-only preflight checks for authentication, REST API shape, and requested
   content capabilities;
 - 27 built-in rules covering common tokens, keys, connection strings, private
@@ -104,6 +105,44 @@ confluleaks --space ENG
 the default for backward compatibility. Prefer a dedicated least-privilege
 account and tokens over reusable account passwords.
 
+## Configuration
+
+Copy the tracked example to create a local configuration:
+
+```bash
+cp confluleaks.example.yaml confluleaks.yaml
+```
+
+`confluleaks.yaml` in the current working directory is loaded automatically and
+is ignored by Git. To use a different file, pass `--config PATH` or set
+`CONFLULEAKS_CONFIG`. Pass `--no-config` to ignore both the environment-selected
+file and the local file.
+
+Settings are resolved in this order, from highest to lowest priority:
+
+1. command-line options;
+2. `CONFLUENCE_URL` and `CONFLUENCE_AUTH`;
+3. the selected YAML file;
+4. built-in defaults.
+
+For repeatable `--space` and `--exclude-space` options, the first command-line
+occurrence replaces the whole configured list. Boolean settings can be
+overridden in either direction, for example `--comments` or `--no-comments`.
+Relative `rules` and `baseline` paths are resolved from the configuration
+file's directory rather than the process working directory.
+`--preflight` and `--write-baseline` remain command-line-only actions.
+
+The schema is flat, uses `version: 1`, and accepts the option names shown in
+[`confluleaks.example.yaml`](confluleaks.example.yaml). Unknown fields, invalid
+types, unsupported versions, and unreadable selected files fail closed before
+any Confluence request is made.
+
+Tokens, passwords, API tokens, and usernames are deliberately rejected in the
+YAML file. Keep authentication material in `CONFLUENCE_TOKEN` and, for Basic
+auth, `CONFLUENCE_USERNAME`. The example file is safe to commit; a populated
+local `confluleaks.yaml` is not intended to be committed even though it cannot
+contain authentication credentials.
+
 ## Preflight
 
 Before scanning a real installation, verify the connection and the exact scope
@@ -138,10 +177,11 @@ sample, such as a previous page version; warnings still return exit code `0`.
 `FAIL` covers rejected authentication, missing permissions, unavailable
 resources, or incompatible response fields and returns exit code `1`.
 
-Preflight does not load detection rules, scan content, download attachments, or
-write baselines. It is a compatibility probe, not proof that the account can
-read every page in a large installation. Output is available as `text` or
-`json`; SARIF is intentionally reserved for actual findings.
+Preflight does not load detection rules or baselines, scan content, download
+attachments, apply `fail_on`, or write baselines. It is a compatibility probe,
+not proof that the account can read every page in a large installation. Output
+is available as `text` or `json`; SARIF is intentionally reserved for actual
+findings.
 
 ## Quick start
 
@@ -447,6 +487,8 @@ confluleaks [OPTIONS]
 
 --url URL                    override CONFLUENCE_URL
 --auth {bearer,basic}        authentication method (default: bearer)
+--config PATH                load this YAML configuration
+--no-config                  ignore environment-selected and local YAML files
 --preflight                  check authentication and REST capabilities
 --version                    print the installed version
 --rules PATH                 load a YAML rules file
@@ -511,6 +553,9 @@ The detector operates on a small document model and does not make Confluence
 requests. This keeps data access, extraction, detection, and reporting separate
 enough to refactor independently.
 
+CLI arguments, environment variables, and the optional versioned YAML file are
+merged and validated before `ConfluenceClient` is constructed.
+
 ## Security notes
 
 - Authentication secrets are read only from `CONFLUENCE_TOKEN`; Basic auth also
@@ -542,17 +587,19 @@ Optional syntax compilation check:
 python -m compileall -q confluleaks scanner tests
 ```
 
-The tests cover extraction, rules, context and entropy filtering, report
-redaction, history deduplication, comment scanning, attachment classification
-and limits, response/document/finding/runtime guardrails, regex timeouts, retry
-configuration, preflight compatibility checks, SARIF structure, baseline
-stability, and partial-error behavior.
+The tests cover configuration discovery, precedence, and validation;
+extraction; rules; context and entropy filtering; report redaction; history
+deduplication; comment scanning; attachment classification and limits;
+response/document/finding/runtime guardrails; regex timeouts; retry
+configuration; preflight compatibility checks; SARIF structure; baseline
+stability; and partial-error behavior.
 
 ## Repository layout
 
 ```text
 scanner/
   auth.py             Bearer and Basic authentication strategies
+  config.py           YAML discovery, schema, and validation
   preflight.py        read-only connection and compatibility checks
   main.py             CLI and exit-code policy
   confluence.py       REST client, pagination, retries, downloads
@@ -569,6 +616,7 @@ scanner/
 confluleaks/
   __main__.py         branded `python -m confluleaks` entry point
 tests/                 unit and integration-oriented tests
+confluleaks.example.yaml  safe, tracked configuration template
 pyproject.toml         Python build backend configuration
 setup.cfg              metadata, dependencies, package data, and console script
 ```

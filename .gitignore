@@ -10,6 +10,7 @@ dist/
 .env
 .env.*
 !.env.example
+confluleaks.yaml
 
 .vscode/
 .idea/

@@ -3,7 +3,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from scanner import PRODUCT_COMMAND, __version__
 from scanner.auth import AuthConfigurationError, AuthMethod, ConfluenceAuth
@@ -14,6 +14,7 @@ from scanner.baseline import (
     write_baseline,
 )
 from scanner.confluence import ConfluenceClient, ConfluenceError
+from scanner.config import ConfigurationError, discover_config_path, load_config
 from scanner.detector import Detector
 from scanner.models import Severity
 from scanner.preflight import (
@@ -27,14 +28,32 @@ from scanner.sarif import write_sarif_report
 from scanner.service import SecretScanner
 
 
-def build_parser() -> argparse.ArgumentParser:
+class OverrideConfigAppendAction(argparse.Action):
+    """Replace a configured list when the option first appears on the CLI."""
+
+    def __call__(self, parser, namespace, value, option_string=None) -> None:
+        marker = f"_cli_override_{self.dest}"
+        if not getattr(namespace, marker, False):
+            setattr(namespace, self.dest, [])
+            setattr(namespace, marker, True)
+        getattr(namespace, self.dest).append(value)
+
+
+def build_parser(
+    config_values: Optional[Mapping[str, Any]] = None,
+) -> argparse.ArgumentParser:
+    configured = dict(config_values or {})
+
+    def setting(name: str, default: Any) -> Any:
+        return configured.get(name, default)
+
     parser = argparse.ArgumentParser(
         prog=PRODUCT_COMMAND,
         description="Scan current Confluence pages for accidentally exposed secrets",
     )
     parser.add_argument(
         "--url",
-        default=os.environ.get("CONFLUENCE_URL"),
+        default=os.environ.get("CONFLUENCE_URL", setting("url", None)),
         help="Confluence base URL (or set CONFLUENCE_URL)",
     )
     parser.add_argument(
@@ -42,9 +61,20 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(method.value for method in AuthMethod),
         default=os.environ.get(
             "CONFLUENCE_AUTH",
-            AuthMethod.BEARER.value,
+            setting("auth", AuthMethod.BEARER.value),
         ).casefold(),
         help="authentication method (or set CONFLUENCE_AUTH; default: bearer)",
+    )
+    config_group = parser.add_mutually_exclusive_group()
+    config_group.add_argument(
+        "--config",
+        type=Path,
+        help="load YAML configuration from this path",
+    )
+    config_group.add_argument(
+        "--no-config",
+        action="store_true",
+        help="ignore configured and local YAML files",
     )
     parser.add_argument(
         "--preflight",
@@ -59,136 +89,146 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--rules",
         type=Path,
-        default=DEFAULT_RULES_PATH,
+        default=setting("rules", DEFAULT_RULES_PATH),
         help="YAML rules file",
     )
     parser.add_argument(
         "--format",
         choices=("text", "json", "sarif"),
-        default="text",
+        default=setting("format", "text"),
     )
-    parser.add_argument("--page-size", type=int, default=50)
-    parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--page-size", type=int, default=setting("page_size", 50))
+    parser.add_argument("--timeout", type=float, default=setting("timeout", 20.0))
     parser.add_argument(
         "--space",
-        action="append",
-        default=[],
+        action=OverrideConfigAppendAction,
+        default=list(setting("spaces", [])),
         metavar="KEY",
         help="scan only this space; can be repeated",
     )
     parser.add_argument(
         "--exclude-space",
-        action="append",
-        default=[],
+        action=OverrideConfigAppendAction,
+        default=list(setting("exclude_spaces", [])),
         metavar="KEY",
         help="skip this space; can be repeated",
     )
     parser.add_argument(
         "--include-personal-spaces",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=setting("include_personal_spaces", False),
         help="include personal spaces when --space is not used",
     )
     parser.add_argument(
         "--include-archived-spaces",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=setting("include_archived_spaces", False),
         help="include archived spaces when --space is not used",
     )
     parser.add_argument(
         "--max-pages",
         type=int,
+        default=setting("max_pages", None),
         help="stop after scanning at most this many current pages",
     )
     parser.add_argument(
         "--history",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=setting("history", False),
         help="scan historical page versions in addition to current content",
     )
     parser.add_argument(
         "--history-limit",
         type=int,
+        default=setting("history_limit", None),
         help="scan at most this many previous versions per page",
     )
     parser.add_argument(
         "--comments",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=setting("comments", False),
         help="scan current page comments",
     )
     parser.add_argument(
         "--attachments",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=setting("attachments", False),
         help="scan supported text attachments",
     )
     parser.add_argument(
         "--max-attachment-size-mb",
         type=float,
-        default=5.0,
+        default=setting("max_attachment_size_mb", 5.0),
         metavar="MB",
         help="skip attachments larger than this many MiB (default: 5)",
     )
     parser.add_argument(
         "--max-response-size-mb",
         type=float,
-        default=16.0,
+        default=setting("max_response_size_mb", 16.0),
         metavar="MB",
         help="abort a REST response larger than this many MiB (default: 16)",
     )
     parser.add_argument(
         "--max-document-size-mb",
         type=float,
-        default=5.0,
+        default=setting("max_document_size_mb", 5.0),
         metavar="MB",
         help="skip extracted documents larger than this many MiB (default: 5)",
     )
     parser.add_argument(
         "--regex-timeout",
         type=float,
-        default=0.25,
+        default=setting("regex_timeout", 0.25),
         metavar="SECONDS",
         help="timeout for each regex operation (default: 0.25)",
     )
     parser.add_argument(
         "--max-findings",
         type=int,
-        default=10_000,
+        default=setting("max_findings", 10_000),
         metavar="N",
         help="stop after retaining this many findings (default: 10000)",
     )
     parser.add_argument(
         "--max-findings-per-document",
         type=int,
-        default=1_000,
+        default=setting("max_findings_per_document", 1_000),
         metavar="N",
         help="retain at most this many findings per document (default: 1000)",
     )
     parser.add_argument(
         "--max-runtime",
         type=float,
-        default=3_600.0,
+        default=setting("max_runtime", 3_600.0),
         metavar="SECONDS",
         help="soft total scan runtime limit (default: 3600)",
     )
     parser.add_argument(
         "--continue-on-error",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=setting("continue_on_error", False),
         help="continue other spaces/pages after a recoverable request error",
     )
-    parser.add_argument("--retries", type=int, default=3)
-    parser.add_argument("--backoff", type=float, default=0.5)
+    parser.add_argument("--retries", type=int, default=setting("retries", 3))
+    parser.add_argument("--backoff", type=float, default=setting("backoff", 0.5))
     parser.add_argument(
         "--request-delay",
         type=float,
-        default=0.0,
+        default=setting("request_delay", 0.0),
         metavar="SECONDS",
         help="minimum delay between Confluence requests",
     )
     parser.add_argument(
         "--fail-on",
         choices=tuple(severity.value for severity in Severity),
+        default=setting("fail_on", None),
         help="exit with status 2 if this severity or higher is found",
     )
     parser.add_argument(
         "--baseline",
         type=Path,
+        default=setting("baseline", None),
         help="suppress findings already present in this baseline",
     )
     parser.add_argument(
@@ -200,19 +240,33 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_arguments(
+    argv: Optional[Sequence[str]] = None,
+) -> Tuple[argparse.ArgumentParser, argparse.Namespace]:
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    if any(option in raw_argv for option in ("-h", "--help", "--version")):
+        parser = build_parser()
+        return parser, parser.parse_args(raw_argv)
+
+    config_path = discover_config_path(raw_argv)
+    configuration = load_config(config_path)
+    parser = build_parser(configuration.values)
+    return parser, parser.parse_args(raw_argv)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    try:
+        parser, args = _parse_arguments(argv)
+    except ConfigurationError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
 
     if not args.url:
         parser.error("Confluence URL is required via --url or CONFLUENCE_URL")
     if args.preflight and args.format == "sarif":
         parser.error("--preflight supports only text and json output")
-    if args.preflight and (args.baseline or args.write_baseline or args.fail_on):
-        parser.error(
-            "--baseline, --write-baseline, and --fail-on cannot be used with "
-            "--preflight"
-        )
+    if args.preflight and args.write_baseline:
+        parser.error("--write-baseline cannot be used with --preflight")
     try:
         auth = _load_auth(args.auth)
     except AuthConfigurationError as error:

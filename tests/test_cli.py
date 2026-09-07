@@ -108,12 +108,17 @@ class PublicCliTest(unittest.TestCase):
         ) as load_rules, redirect_stdout(output):
             exit_code = main(
                 [
+                    "--no-config",
                     "--url",
                     "https://confluence.example.test",
                     "--preflight",
                     "--space",
                     "ENG",
                     "--comments",
+                    "--baseline",
+                    "ignored-during-preflight.json",
+                    "--fail-on",
+                    "high",
                     "--format",
                     "json",
                 ]
@@ -129,6 +134,7 @@ class PublicCliTest(unittest.TestCase):
         with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
             main(
                 [
+                    "--no-config",
                     "--url",
                     "https://confluence.example.test",
                     "--preflight",
@@ -156,7 +162,9 @@ class PublicCliTest(unittest.TestCase):
         ), patch("scanner.main.SecretScanner", return_value=scanner), redirect_stdout(
             StringIO()
         ):
-            exit_code = main(["--url", "https://confluence.example.test"])
+            exit_code = main(
+                ["--no-config", "--url", "https://confluence.example.test"]
+            )
 
         self.assertEqual(exit_code, 1)
 
