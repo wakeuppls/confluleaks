@@ -20,6 +20,7 @@ baseline output.
 - optional historical page-version scanning;
 - optional scanning of current footer, inline, and resolved comments;
 - optional scanning of supported text attachments with a hard size limit;
+- Bearer token and HTTP Basic authentication;
 - 27 built-in rules covering common tokens, keys, connection strings, private
   keys, and labelled credentials;
 - rule-specific context, entropy thresholds, allowlists, and stopwords;
@@ -33,8 +34,8 @@ baseline output.
 
 ## Known limitations
 
-- Authentication is currently **Bearer only**. Confluence setups that require
-  Basic auth with an email/API-token pair are not supported yet.
+- Browser/SSO sessions, OAuth, Kerberos, client certificates, and manually
+  supplied cookies are not supported.
 - The client targets the REST API v1 response shape. It has not yet been
   compatibility-tested against every Confluence Cloud and Data Center release.
 - Only Confluence `body.storage` page content is extracted.
@@ -54,7 +55,7 @@ baseline output.
 
 - Python 3.9 or newer;
 - network access from the scanner to the Confluence REST API;
-- a token accepted as `Authorization: Bearer ...`;
+- either a Bearer token or credentials accepted through HTTP Basic auth;
 - read access to every space, page, historical version, comment, or attachment
   included in the scan.
 
@@ -73,6 +74,33 @@ python -m pip install .
 This installs the `confluleaks` command in the active environment. For editable
 development with a current pip version, use `python -m pip install -e .`.
 Running `python -m confluleaks` directly from the checkout is also supported.
+
+## Authentication
+
+Authentication secrets are read only from environment variables. Bearer is the
+default and is appropriate for Confluence Data Center personal access tokens:
+
+```bash
+export CONFLUENCE_URL='https://confluence.example.com'
+export CONFLUENCE_TOKEN='<personal-access-token>'
+confluleaks --space ENG
+```
+
+Basic authentication uses `CONFLUENCE_USERNAME` as the user ID and
+`CONFLUENCE_TOKEN` as the password or API token. For Confluence Cloud, use the
+account email as the username and an API token as the secret:
+
+```bash
+export CONFLUENCE_URL='https://example.atlassian.net/wiki'
+export CONFLUENCE_AUTH='basic'
+export CONFLUENCE_USERNAME='scanner@example.com'
+export CONFLUENCE_TOKEN='<api-token-or-password>'
+confluleaks --space ENG
+```
+
+`--auth bearer` or `--auth basic` overrides `CONFLUENCE_AUTH`. Bearer remains
+the default for backward compatibility. Prefer a dedicated least-privilege
+account and tokens over reusable account passwords.
 
 ## Quick start
 
@@ -377,6 +405,7 @@ Run `confluleaks --help` for the authoritative CLI help.
 confluleaks [OPTIONS]
 
 --url URL                    override CONFLUENCE_URL
+--auth {bearer,basic}        authentication method (default: bearer)
 --version                    print the installed version
 --rules PATH                 load a YAML rules file
 --format {text,json,sarif}   output format (default: text)
@@ -441,8 +470,9 @@ enough to refactor independently.
 
 ## Security notes
 
-- The token is read only from `CONFLUENCE_TOKEN`; do not put it in command-line
-  arguments or commit it to the repository.
+- Authentication secrets are read only from `CONFLUENCE_TOKEN`; Basic auth also
+  reads `CONFLUENCE_USERNAME`. Do not put secrets in command-line arguments or
+  commit them to the repository.
 - HTTP response bodies are not included in request exceptions.
 - Matched values and source snippets are not written to reports or baselines.
 - Attachment downloads reject direct cross-origin URLs to avoid forwarding the
@@ -478,6 +508,7 @@ configuration, SARIF structure, baseline stability, and partial-error behavior.
 
 ```text
 scanner/
+  auth.py             Bearer and Basic authentication strategies
   main.py             CLI and exit-code policy
   confluence.py       REST client, pagination, retries, downloads
   service.py          scan orchestration and scope
@@ -514,8 +545,8 @@ small steps:
    history, comments, attachments, and exit thresholds.
 6. Add sanitized fixtures captured from the exact target Confluence editions
    and versions.
-7. Add an authentication strategy abstraction before supporting Basic auth or
-   OAuth flows.
+7. Evaluate whether OAuth or enterprise authentication adapters belong in the
+   base package or optional integrations.
 8. Evaluate incremental scanning, bounded concurrency, and structured metrics
    only after establishing rate-limit behavior on the target instance.
 

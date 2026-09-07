@@ -1,3 +1,4 @@
+import os
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -5,7 +6,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import confluleaks
 import scanner
-from scanner.main import build_parser, main
+from scanner.auth import AuthConfigurationError, AuthMethod
+from scanner.main import _load_auth, build_parser, main
 from scanner.models import ScanResult
 
 
@@ -32,6 +34,48 @@ class PublicCliTest(unittest.TestCase):
         self.assertFalse(parser.parse_args([]).comments)
         self.assertTrue(parser.parse_args(["--comments"]).comments)
 
+    def test_auth_defaults_to_bearer_and_honors_environment_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(build_parser().parse_args([]).auth, "bearer")
+        with patch.dict(os.environ, {"CONFLUENCE_AUTH": "BASIC"}, clear=True):
+            self.assertEqual(build_parser().parse_args([]).auth, "basic")
+
+    def test_auth_is_loaded_from_environment(self):
+        with patch.dict(
+            os.environ,
+            {"CONFLUENCE_TOKEN": "bearer-secret"},
+            clear=True,
+        ):
+            bearer = _load_auth("bearer")
+        with patch.dict(
+            os.environ,
+            {
+                "CONFLUENCE_TOKEN": "basic-secret",
+                "CONFLUENCE_USERNAME": "scanner@example.test",
+            },
+            clear=True,
+        ):
+            basic = _load_auth("basic")
+
+        self.assertEqual(bearer.method, AuthMethod.BEARER)
+        self.assertEqual(basic.method, AuthMethod.BASIC)
+        self.assertEqual(basic.username, "scanner@example.test")
+
+    def test_basic_auth_requires_username(self):
+        with patch.dict(
+            os.environ,
+            {"CONFLUENCE_TOKEN": "basic-secret"},
+            clear=True,
+        ), self.assertRaises(AuthConfigurationError):
+            _load_auth("basic")
+
+    def test_all_auth_methods_require_token(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(AuthConfigurationError):
+                _load_auth("bearer")
+            with self.assertRaises(AuthConfigurationError):
+                _load_auth("basic")
+
     def test_large_installation_guardrail_defaults(self):
         args = build_parser().parse_args([])
 
@@ -51,8 +95,9 @@ class PublicCliTest(unittest.TestCase):
         client.__enter__.return_value = client
 
         with patch.dict(
-            "os.environ",
+            os.environ,
             {"CONFLUENCE_TOKEN": "synthetic-token"},
+            clear=True,
         ), patch("scanner.main.load_rules", return_value=[]), patch(
             "scanner.main.ConfluenceClient", return_value=client
         ), patch("scanner.main.SecretScanner", return_value=scanner), redirect_stdout(

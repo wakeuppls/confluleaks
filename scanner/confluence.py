@@ -8,6 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from scanner import __version__
+from scanner.auth import ConfluenceAuth
 
 
 class ConfluenceError(RuntimeError):
@@ -30,14 +31,21 @@ class ConfluenceClient:
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: Optional[str] = None,
         timeout: float = 20.0,
         page_size: int = 50,
         retries: int = 3,
         backoff: float = 0.5,
         request_delay: float = 0.0,
         max_response_bytes: int = 16 * 1024 * 1024,
+        auth: Optional[ConfluenceAuth] = None,
     ) -> None:
+        if auth is not None and token is not None:
+            raise ValueError("pass either auth or token, not both")
+        if auth is None:
+            if token is None:
+                raise ValueError("authentication configuration is required")
+            auth = ConfluenceAuth.bearer(token)
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.page_size = max(1, min(200, page_size))
@@ -49,11 +57,11 @@ class ConfluenceClient:
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "Authorization": f"Bearer {token}",
                 "Accept": "application/json",
                 "User-Agent": f"confluleaks/{__version__}",
             }
         )
+        auth.apply(self.session)
         retry_policy = Retry(
             total=max(0, retries),
             connect=max(0, retries),

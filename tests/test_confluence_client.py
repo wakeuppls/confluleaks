@@ -41,6 +41,7 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
         )
         retry = client.session.get_adapter("https://").max_retries
         user_agent = client.session.headers["User-Agent"]
+        authorization = client.session.headers["Authorization"]
         client.close()
 
         self.assertEqual(retry.total, 4)
@@ -49,6 +50,33 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
         self.assertEqual(set(retry.allowed_methods), {"GET"})
         self.assertTrue(retry.respect_retry_after_header)
         self.assertEqual(user_agent, "confluleaks/0.1.0")
+        self.assertEqual(authorization, "Bearer synthetic-token")
+
+    def test_explicit_basic_auth_is_applied_to_requests(self):
+        from scanner.auth import ConfluenceAuth
+        from scanner.confluence import ConfluenceClient
+
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            auth=ConfluenceAuth.basic("scanner", "synthetic-password"),
+        )
+        prepared = client.session.prepare_request(
+            requests.Request("GET", client.absolute_url("/rest/api/space"))
+        )
+        client.close()
+
+        self.assertTrue(prepared.headers["Authorization"].startswith("Basic "))
+
+    def test_token_and_explicit_auth_cannot_be_combined(self):
+        from scanner.auth import ConfluenceAuth
+        from scanner.confluence import ConfluenceClient
+
+        with self.assertRaises(ValueError):
+            ConfluenceClient(
+                "https://confluence.example.test",
+                "legacy-token",
+                auth=ConfluenceAuth.bearer("explicit-token"),
+            )
 
     def test_request_delay_spaces_request_start_times(self):
         from scanner.confluence import ConfluenceClient

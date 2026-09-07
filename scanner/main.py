@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from scanner import PRODUCT_COMMAND, __version__
+from scanner.auth import AuthConfigurationError, AuthMethod, ConfluenceAuth
 from scanner.baseline import (
     BaselineError,
     apply_baseline,
@@ -30,6 +31,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--url",
         default=os.environ.get("CONFLUENCE_URL"),
         help="Confluence base URL (or set CONFLUENCE_URL)",
+    )
+    parser.add_argument(
+        "--auth",
+        choices=tuple(method.value for method in AuthMethod),
+        default=os.environ.get(
+            "CONFLUENCE_AUTH",
+            AuthMethod.BEARER.value,
+        ).casefold(),
+        help="authentication method (or set CONFLUENCE_AUTH; default: bearer)",
     )
     parser.add_argument(
         "--version",
@@ -183,12 +193,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    token = os.environ.get("CONFLUENCE_TOKEN")
 
     if not args.url:
         parser.error("Confluence URL is required via --url or CONFLUENCE_URL")
-    if token is None:
-        parser.error("CONFLUENCE_TOKEN is required")
+    try:
+        auth = _load_auth(args.auth)
+    except AuthConfigurationError as error:
+        parser.error(str(error))
     if args.page_size < 1:
         parser.error("--page-size must be greater than zero")
     if args.timeout <= 0:
@@ -239,7 +250,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         rules = load_rules(args.rules)
         with ConfluenceClient(
             args.url,
-            token,
             timeout=args.timeout,
             page_size=args.page_size,
             retries=args.retries,
@@ -249,6 +259,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 1,
                 int(args.max_response_size_mb * 1024 * 1024),
             ),
+            auth=auth,
         ) as client:
             result = SecretScanner(
                 client,
@@ -310,6 +321,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if any(finding.severity.rank >= threshold for finding in result.findings):
             return 2
     return 0
+
+
+def _load_auth(method: str) -> ConfluenceAuth:
+    secret = os.environ.get("CONFLUENCE_TOKEN")
+    if secret is None:
+        raise AuthConfigurationError("CONFLUENCE_TOKEN is required")
+    auth_method = AuthMethod(method)
+    if auth_method is AuthMethod.BEARER:
+        return ConfluenceAuth.bearer(secret)
+
+    username = os.environ.get("CONFLUENCE_USERNAME")
+    if username is None:
+        raise AuthConfigurationError(
+            "CONFLUENCE_USERNAME is required for Basic authentication"
+        )
+    return ConfluenceAuth.basic(username, secret)
 
 
 if __name__ == "__main__":
