@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 try:
@@ -66,6 +68,62 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
         client.close()
 
         self.assertTrue(prepared.headers["Authorization"].startswith("Basic "))
+
+    def test_custom_ca_bundle_is_used_for_tls_verification(self):
+        from scanner.confluence import ConfluenceClient
+
+        with tempfile.TemporaryDirectory() as directory:
+            ca_bundle = Path(directory) / "company-ca.pem"
+            ca_bundle.write_text("synthetic PEM content", encoding="utf-8")
+            client = ConfluenceClient(
+                "https://confluence.example.test",
+                "synthetic-token",
+                ca_bundle=ca_bundle,
+            )
+            with patch.object(
+                client.session,
+                "get",
+                return_value=FakeStreamingResponse(b'{"results": []}'),
+            ) as request:
+                client.get_spaces()
+
+            self.assertEqual(client.session.verify, str(ca_bundle))
+            self.assertEqual(request.call_args.kwargs["verify"], str(ca_bundle))
+            client.close()
+
+    def test_custom_ca_bundle_must_be_a_readable_non_empty_file(self):
+        from scanner.confluence import ConfluenceClient
+
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "missing.pem"
+            empty = Path(directory) / "empty.pem"
+            empty.touch()
+
+            for ca_bundle in (missing, empty, Path(directory)):
+                with self.subTest(ca_bundle=ca_bundle), self.assertRaises(ValueError):
+                    ConfluenceClient(
+                        "https://confluence.example.test",
+                        "synthetic-token",
+                        ca_bundle=ca_bundle,
+                    )
+
+    def test_tls_failure_has_a_safe_actionable_error(self):
+        from scanner.confluence import ConfluenceClient, ConfluenceError
+
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            "synthetic-token",
+        )
+        with patch.object(
+            client.session,
+            "get",
+            side_effect=requests.exceptions.SSLError("synthetic library details"),
+        ), self.assertRaises(ConfluenceError) as raised:
+            client.get_spaces()
+        client.close()
+
+        self.assertIn("TLS certificate verification failed", str(raised.exception))
+        self.assertNotIn("synthetic library details", str(raised.exception))
 
     def test_token_and_explicit_auth_cannot_be_combined(self):
         from scanner.auth import ConfluenceAuth

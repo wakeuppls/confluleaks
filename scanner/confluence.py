@@ -1,6 +1,7 @@
 import json
 import math
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 from urllib.parse import quote, urlsplit
 
@@ -40,6 +41,7 @@ class ConfluenceClient:
         request_delay: float = 0.0,
         max_response_bytes: int = 16 * 1024 * 1024,
         auth: Optional[ConfluenceAuth] = None,
+        ca_bundle: Optional[Path] = None,
     ) -> None:
         if auth is not None and token is not None:
             raise ValueError("pass either auth or token, not both")
@@ -62,8 +64,11 @@ class ConfluenceClient:
         if max_response_bytes < 1:
             raise ValueError("max_response_bytes must be greater than zero")
         self.max_response_bytes = max_response_bytes
+        self.ca_bundle = self._validated_ca_bundle(ca_bundle)
         self._last_request_at: Optional[float] = None
         self.session = requests.Session()
+        if self.ca_bundle is not None:
+            self.session.verify = str(self.ca_bundle)
         self.session.headers.update(
             {
                 "Accept": "application/json",
@@ -269,6 +274,7 @@ class ConfluenceClient:
                 timeout=self.timeout,
                 stream=True,
                 headers={"Accept": "*/*"},
+                verify=self.session.verify,
             ) as response:
                 response.raise_for_status()
                 declared_size = response.headers.get("Content-Length")
@@ -295,6 +301,10 @@ class ConfluenceClient:
                 return b"".join(chunks)
         except AttachmentTooLargeError:
             raise
+        except requests.exceptions.SSLError as error:
+            raise ConfluenceError(
+                f"Confluence TLS certificate verification failed: {url}"
+            ) from error
         except requests.RequestException as error:
             status = getattr(error.response, "status_code", None)
             suffix = f" (HTTP {status})" if status else ""
@@ -371,6 +381,7 @@ class ConfluenceClient:
                 params=params,
                 timeout=self.timeout,
                 stream=True,
+                verify=self.session.verify,
             ) as response:
                 response.raise_for_status()
                 declared_size = response.headers.get("Content-Length")
@@ -399,6 +410,10 @@ class ConfluenceClient:
                 payload = json.loads(b"".join(chunks))
         except ResponseTooLargeError:
             raise
+        except requests.exceptions.SSLError as error:
+            raise ConfluenceError(
+                f"Confluence TLS certificate verification failed: {url}"
+            ) from error
         except requests.RequestException as error:
             status = getattr(error.response, "status_code", None)
             suffix = f" (HTTP {status})" if status else ""
@@ -412,6 +427,22 @@ class ConfluenceClient:
         if not isinstance(payload, dict):
             raise ConfluenceError(f"Confluence returned an invalid response: {url}")
         return payload
+
+    @staticmethod
+    def _validated_ca_bundle(ca_bundle: Optional[Path]) -> Optional[Path]:
+        if ca_bundle is None:
+            return None
+        path = Path(ca_bundle).expanduser()
+        try:
+            if not path.is_file() or path.stat().st_size == 0:
+                raise ValueError
+            with path.open("rb") as stream:
+                stream.read(1)
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                f"CA bundle must be a readable non-empty file: {path}"
+            ) from error
+        return path
 
     def _wait_before_request(self) -> None:
         if self._last_request_at is not None and self.request_delay:

@@ -80,6 +80,16 @@ def build_parser(
         ).casefold(),
         help="authentication method (or set CONFLUENCE_AUTH; default: bearer)",
     )
+    parser.add_argument(
+        "--ca-bundle",
+        type=Path,
+        default=os.environ.get(
+            "CONFLUENCE_CA_BUNDLE",
+            setting("ca_bundle", None),
+        ),
+        metavar="PATH",
+        help="PEM CA bundle for TLS verification (or set CONFLUENCE_CA_BUNDLE)",
+    )
     config_group = parser.add_mutually_exclusive_group()
     config_group.add_argument(
         "--config",
@@ -303,6 +313,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 int(args.max_response_size_mb * 1024 * 1024),
             ),
             auth=auth,
+            ca_bundle=args.ca_bundle,
         ) as client:
             if args.preflight:
                 preflight_result = PreflightChecker(

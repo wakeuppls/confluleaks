@@ -4,6 +4,9 @@ version: 1
 # variables. Never store a token or password in this file.
 url: https://confluence.example.com/confluence
 auth: bearer
+# For an internal CA, point to a readable PEM bundle instead of disabling TLS
+# verification. Relative paths are resolved from this file's directory.
+# ca_bundle: certificates/company-ca.pem
 
 # Omit rules to use the built-in pack. Relative custom paths are resolved from
 # this configuration file's directory.

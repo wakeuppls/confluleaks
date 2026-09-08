@@ -3,6 +3,7 @@ import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import confluleaks
@@ -137,7 +138,10 @@ class PublicCliTest(unittest.TestCase):
             os.environ,
             {"CONFLUENCE_TOKEN": "synthetic-token"},
             clear=True,
-        ), patch("scanner.main.ConfluenceClient", return_value=client), patch(
+        ), patch(
+            "scanner.main.ConfluenceClient",
+            return_value=client,
+        ) as client_class, patch(
             "scanner.main.PreflightChecker", return_value=checker
         ) as checker_class, patch(
             "scanner.main.load_rules"
@@ -148,6 +152,8 @@ class PublicCliTest(unittest.TestCase):
                     "--url",
                     "https://confluence.example.test",
                     "--preflight",
+                    "--ca-bundle",
+                    "/tmp/synthetic-company-ca.pem",
                     "--space",
                     "ENG",
                     "--comments",
@@ -163,6 +169,10 @@ class PublicCliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertTrue(json.loads(output.getvalue())["preflight"]["ok"])
         load_rules.assert_not_called()
+        self.assertEqual(
+            client_class.call_args.kwargs["ca_bundle"],
+            Path("/tmp/synthetic-company-ca.pem"),
+        )
         self.assertEqual(checker_class.call_args.kwargs["space_keys"], ["ENG"])
         self.assertTrue(checker_class.call_args.kwargs["check_comments"])
 

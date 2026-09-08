@@ -101,9 +101,31 @@ export CONFLUENCE_TOKEN='<api-token-or-password>'
 confluleaks --space ENG
 ```
 
+SSO plugins may define their own token scheme. For example,
+[Kantega SSO Enterprise API tokens](https://kantega-sso.atlassian.net/wiki/spaces/KSE/pages/28180485/API+Tokens)
+are used as the Basic-auth password together with the underlying Confluence
+username, not as Bearer tokens.
+
 `--auth bearer` or `--auth basic` overrides `CONFLUENCE_AUTH`. Bearer remains
 the default for backward compatibility. Prefer a dedicated least-privilege
 account and tokens over reusable account passwords.
+
+## TLS verification
+
+HTTPS certificates are verified by default. If Confluence uses an internal
+certificate authority, provide a readable PEM CA bundle containing the trusted
+root and any required intermediate certificates:
+
+```bash
+export CONFLUENCE_CA_BUNDLE='/etc/ssl/certs/company-ca.pem'
+confluleaks --preflight --space ENG
+```
+
+The equivalent command-line option is `--ca-bundle PATH`, and configuration
+files accept `ca_bundle`. Relative configuration paths are resolved from the
+configuration file's directory. Confluleaks deliberately has no insecure
+`-k`/`--no-verify` mode; install the corporate CA into the trust store used by
+Python/Requests or provide an explicit bundle.
 
 ## Configuration
 
@@ -121,15 +143,15 @@ file and the local file.
 Settings are resolved in this order, from highest to lowest priority:
 
 1. command-line options;
-2. `CONFLUENCE_URL` and `CONFLUENCE_AUTH`;
+2. `CONFLUENCE_URL`, `CONFLUENCE_AUTH`, and `CONFLUENCE_CA_BUNDLE`;
 3. the selected YAML file;
 4. built-in defaults.
 
 For repeatable `--space` and `--exclude-space` options, the first command-line
 occurrence replaces the whole configured list. Boolean settings can be
 overridden in either direction, for example `--comments` or `--no-comments`.
-Relative `rules` and `baseline` paths are resolved from the configuration
-file's directory rather than the process working directory.
+Relative `rules`, `baseline`, and `ca_bundle` paths are resolved from the
+configuration file's directory rather than the process working directory.
 `--preflight` and `--write-baseline` remain command-line-only actions.
 
 The schema is flat, uses `version: 1`, and accepts the option names shown in
@@ -498,6 +520,7 @@ confluleaks [OPTIONS]
 
 --url URL                    override CONFLUENCE_URL
 --auth {bearer,basic}        authentication method (default: bearer)
+--ca-bundle PATH             PEM CA bundle for TLS verification
 --config PATH                load this YAML configuration
 --no-config                  ignore environment-selected and local YAML files
 --preflight                  check authentication and REST capabilities
@@ -572,6 +595,9 @@ merged and validated before `ConfluenceClient` is constructed.
 - Authentication secrets are read only from `CONFLUENCE_TOKEN`; Basic auth also
   reads `CONFLUENCE_USERNAME`. Do not put secrets in command-line arguments or
   commit them to the repository.
+- TLS certificates are verified for every request. Private certificate
+  authorities must be trusted by Python/Requests or supplied through a CA
+  bundle; HTTP should be limited to isolated local testing.
 - HTTP response bodies are not included in request exceptions.
 - Matched values and source snippets are not written to reports or baselines.
 - Attachment downloads reject direct cross-origin URLs to avoid forwarding the

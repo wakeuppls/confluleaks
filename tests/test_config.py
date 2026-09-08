@@ -26,6 +26,7 @@ class ConfigurationTest(unittest.TestCase):
 version: 1
 url: " https://confluence.example.test/confluence "
 auth: " BASIC "
+ca_bundle: " certs/company-ca.pem "
 rules: " rules.yaml "
 baseline: state/baseline.json
 spaces: [" ENG ", OPS, ENG]
@@ -47,6 +48,10 @@ fail_on: high
             "https://confluence.example.test/confluence",
         )
         self.assertEqual(configuration.values["auth"], "basic")
+        self.assertEqual(
+            configuration.values["ca_bundle"],
+            Path(directory) / "certs/company-ca.pem",
+        )
         self.assertEqual(configuration.values["spaces"], ["ENG", "OPS"])
         self.assertTrue(configuration.values["comments"])
         self.assertEqual(configuration.values["page_size"], 25)
@@ -152,6 +157,7 @@ fail_on: high
             {
                 "CONFLUENCE_URL": "https://environment.example.test",
                 "CONFLUENCE_AUTH": "BEARER",
+                "CONFLUENCE_CA_BUNDLE": "/etc/company/environment-ca.pem",
             },
             clear=True,
         ):
@@ -159,12 +165,17 @@ fail_on: high
                 {
                     "url": "https://configuration.example.test",
                     "auth": "basic",
+                    "ca_bundle": Path("/etc/company/configuration-ca.pem"),
                 }
             )
             args = parser.parse_args([])
 
         self.assertEqual(args.url, "https://environment.example.test")
         self.assertEqual(args.auth, "bearer")
+        self.assertEqual(
+            args.ca_bundle,
+            Path("/etc/company/environment-ca.pem"),
+        )
 
     def test_explicit_config_is_applied_by_main_argument_loader(self):
         with tempfile.TemporaryDirectory() as directory:
