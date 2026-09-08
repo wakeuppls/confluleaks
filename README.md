@@ -714,6 +714,13 @@ response/document/finding/runtime guardrails; regex timeouts; retry
 configuration; preflight compatibility checks; SARIF structure; baseline
 stability; and partial-error behavior.
 
+## License
+
+Copyright 2026 wakeuppls.
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and
+[NOTICE](NOTICE).
+
 ## Repository layout
 
 ```text
@@ -739,6 +746,8 @@ tests/                 unit and integration-oriented tests
 confluleaks.example.yaml  safe, tracked configuration template
 pyproject.toml         Python build backend configuration
 setup.cfg              metadata, dependencies, package data, and console script
+MANIFEST.in            source-distribution inclusion and exclusion rules
+LICENSE / NOTICE       Apache-2.0 terms and attribution
 ```
 
 ## Suggested refactoring checklist

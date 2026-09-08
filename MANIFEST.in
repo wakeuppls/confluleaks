@@ -1,0 +1,4 @@
+exclude MOCK_CONFLUENCE.md
+exclude tests/test_mock_confluence.py
+prune mock_confluence
+global-exclude __pycache__ *.py[cod]
