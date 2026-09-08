@@ -44,6 +44,7 @@ class SecretScanner:
         max_findings_per_document: int = 1_000,
         max_runtime_seconds: float = 3_600.0,
         clock: Optional[Callable[[], float]] = None,
+        progress: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.confluence = confluence_client
         self.detector = detector
@@ -75,6 +76,7 @@ class SecretScanner:
             raise ValueError("max_runtime_seconds must be a positive finite number")
         self.max_runtime_seconds = max_runtime_seconds
         self._clock = clock or time.monotonic
+        self._progress = progress
         self._started_at = 0.0
 
     def scan(self) -> ScanResult:
@@ -91,10 +93,19 @@ class SecretScanner:
     def _scan(self, result: ScanResult) -> ScanResult:
         spaces = self._discover_spaces(result)
         selected_spaces = self._select_spaces(spaces)
+        self._emit_progress(
+            f"Spaces discovered: {result.spaces_discovered}; "
+            f"selected: {len(selected_spaces)}"
+        )
 
-        for space in selected_spaces:
+        for index, space in enumerate(selected_spaces, start=1):
             space_key = self._space_key(space)
             result.spaces_scanned += 1
+            pages_before = result.pages_scanned
+            errors_before = len(result.errors)
+            self._emit_progress(
+                f"Scanning space {space_key} ({index}/{len(selected_spaces)})"
+            )
             try:
                 pages = self.confluence.iter_pages(space_key=space_key)
                 for raw_page in pages:
@@ -106,7 +117,16 @@ class SecretScanner:
                         result.mark_truncated("max_pages")
                         raise ScanLimitReached
                     self._scan_page(raw_page, result)
+                    self._progress_checkpoint(
+                        result,
+                        space_key,
+                        result.pages_discovered,
+                    )
             except ConfluenceError as error:
+                self._emit_progress(
+                    f"Request failed in space {space_key} after "
+                    f"{result.pages_scanned - pages_before} pages"
+                )
                 if not self.continue_on_error and not isinstance(
                     error, ResponseTooLargeError
                 ):
@@ -115,6 +135,14 @@ class SecretScanner:
                 if isinstance(error, ResponseTooLargeError):
                     if not self.continue_on_error:
                         raise ScanLimitReached
+            error_suffix = (
+                " with errors" if len(result.errors) > errors_before else ""
+            )
+            self._emit_progress(
+                f"Finished space {space_key}{error_suffix}: "
+                f"pages={result.pages_scanned - pages_before}; "
+                f"total_pages={result.pages_scanned}"
+            )
 
         return self._finalize(result)
 
@@ -217,6 +245,11 @@ class SecretScanner:
                         result,
                         scope=f"page:{page.id}:version:{historical_page.version}",
                     )
+                    self._progress_checkpoint(
+                        result,
+                        page.space_key,
+                        result.historical_versions_scanned,
+                    )
             except ConfluenceError as error:
                 if not self.continue_on_error and not isinstance(
                     error, ResponseTooLargeError
@@ -243,6 +276,11 @@ class SecretScanner:
             for raw_comment in comments:
                 self._check_runtime(result)
                 result.comments_discovered += 1
+                self._progress_checkpoint(
+                    result,
+                    page.space_key,
+                    result.comments_discovered,
+                )
                 comment_id = "unknown"
                 try:
                     if not isinstance(raw_comment, dict):
@@ -303,8 +341,13 @@ class SecretScanner:
             attachments = self.confluence.iter_attachments(page.id)
             for raw_attachment in attachments:
                 self._check_runtime(result)
+                result.attachments_discovered += 1
+                self._progress_checkpoint(
+                    result,
+                    page.space_key,
+                    result.attachments_discovered,
+                )
                 if not isinstance(raw_attachment, dict):
-                    result.attachments_discovered += 1
                     result.attachments_skipped += 1
                     if self.continue_on_error:
                         result.errors.append(
@@ -316,7 +359,6 @@ class SecretScanner:
                         continue
                     raise TypeError("Confluence attachment response must be an object")
 
-                result.attachments_discovered += 1
                 try:
                     attachment_id = self._content_id(
                         raw_attachment,
@@ -430,6 +472,12 @@ class SecretScanner:
                 finding.rule_id,
             )
         )
+        status = "incomplete" if result.truncated or result.errors else "complete"
+        self._emit_progress(
+            f"Scan {status}: spaces={result.spaces_scanned}; "
+            f"pages={result.pages_scanned}; findings={len(result.findings)}; "
+            f"errors={len(result.errors)}"
+        )
         return result
 
     def _scan_document(
@@ -538,14 +586,22 @@ class SecretScanner:
 
     def _discover_spaces(self, result: ScanResult) -> List[Dict[str, Any]]:
         if not self.include_space_keys:
+            self._emit_progress("Discovering visible spaces")
             spaces = []
             for space in self.confluence.iter_spaces():
                 self._check_runtime(result)
                 self._space_key(space)
                 spaces.append(space)
                 result.spaces_discovered += 1
+                if self._progress_due(result.spaces_discovered):
+                    self._emit_progress(
+                        f"Visible spaces discovered: {result.spaces_discovered}"
+                    )
             return spaces
 
+        self._emit_progress(
+            f"Resolving {len(self.include_space_keys)} requested spaces"
+        )
         spaces = []
         for requested_key in self.include_space_keys:
             self._check_runtime(result)
@@ -580,6 +636,30 @@ class SecretScanner:
             spaces.append(space)
             result.spaces_discovered += 1
         return spaces
+
+    def _progress_checkpoint(
+        self,
+        result: ScanResult,
+        space_key: str,
+        counter: int,
+    ) -> None:
+        if not self._progress_due(counter):
+            return
+        self._emit_progress(
+            f"Progress in {space_key}: pages_seen={result.pages_discovered}; "
+            f"historical_versions={result.historical_versions_scanned}; "
+            f"comments_seen={result.comments_discovered}; "
+            f"attachments_seen={result.attachments_discovered}; "
+            f"candidate_findings={len(result.findings)}"
+        )
+
+    def _emit_progress(self, message: str) -> None:
+        if self._progress is not None:
+            self._progress(message)
+
+    @staticmethod
+    def _progress_due(counter: int) -> bool:
+        return counter == 1 or counter % 25 == 0
 
     def _select_spaces(self, spaces: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         selected = []

@@ -37,6 +37,12 @@ class PublicCliTest(unittest.TestCase):
         self.assertFalse(parser.parse_args([]).comments)
         self.assertTrue(parser.parse_args(["--comments"]).comments)
 
+    def test_progress_can_be_forced_or_disabled(self):
+        parser = build_parser({"progress": True})
+
+        self.assertTrue(parser.parse_args([]).progress)
+        self.assertFalse(parser.parse_args(["--no-progress"]).progress)
+
     def test_auth_defaults_to_bearer_and_honors_environment_default(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(build_parser().parse_args([]).auth, "bearer")
@@ -190,6 +196,45 @@ class PublicCliTest(unittest.TestCase):
             )
 
         self.assertEqual(error.exception.code, 2)
+
+    def test_progress_uses_stderr_without_corrupting_json(self):
+        result = PreflightResult()
+        result.add("authentication", "pass", "synthetic success")
+        checker = Mock()
+        checker.run.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with patch.dict(
+            os.environ,
+            {"CONFLUENCE_TOKEN": "synthetic-token"},
+            clear=True,
+        ), patch(
+            "scanner.main.ConfluenceClient",
+            return_value=client,
+        ), patch(
+            "scanner.main.PreflightChecker",
+            return_value=checker,
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(
+                [
+                    "--no-config",
+                    "--url",
+                    "https://confluence.example.test",
+                    "--preflight",
+                    "--progress",
+                    "--format",
+                    "json",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(stdout.getvalue())["preflight"]["ok"])
+        self.assertIn("Starting preflight", stderr.getvalue())
+        self.assertIn("Preflight passed", stderr.getvalue())
+        self.assertNotIn("[confluleaks", stdout.getvalue())
 
     def test_truncated_result_returns_operational_error(self):
         result = ScanResult()

@@ -22,6 +22,7 @@ from scanner.preflight import (
     write_json_preflight,
     write_text_preflight,
 )
+from scanner.progress import ProgressReporter
 from scanner.report import write_json_report, write_text_report
 from scanner.rules import DEFAULT_RULES_PATH, RuleConfigurationError, load_rules
 from scanner.sarif import write_sarif_report
@@ -247,6 +248,12 @@ def build_parser(
         help="minimum delay between Confluence requests",
     )
     parser.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=setting("progress", None),
+        help="show scan progress on stderr (default: interactive terminals)",
+    )
+    parser.add_argument(
         "--fail-on",
         choices=tuple(severity.value for severity in Severity),
         default=setting("fail_on", None),
@@ -300,6 +307,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except AuthConfigurationError as error:
         parser.error(str(error))
 
+    progress_enabled = (
+        args.progress if args.progress is not None else sys.stderr.isatty()
+    )
+    progress = ProgressReporter(sys.stderr) if progress_enabled else None
+    if progress:
+        operation = "preflight" if args.preflight else "scan"
+        progress(f"Starting {operation}")
+
     try:
         with ConfluenceClient(
             args.url,
@@ -350,9 +365,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     max_findings=args.max_findings,
                     max_findings_per_document=args.max_findings_per_document,
                     max_runtime_seconds=args.max_runtime,
+                    progress=progress,
                 ).scan()
 
         if args.preflight:
+            if progress:
+                outcome = "passed" if preflight_result.ok else "failed"
+                progress(f"Preflight {outcome}")
             if args.format == "json":
                 write_json_preflight(preflight_result, sys.stdout)
             else:
@@ -376,6 +395,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         TypeError,
         ValueError,
     ) as error:
+        if progress:
+            progress("Operation failed")
         print(f"error: {error}", file=sys.stderr)
         return 1
 

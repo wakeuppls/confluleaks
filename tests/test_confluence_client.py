@@ -125,6 +125,51 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
         self.assertIn("TLS certificate verification failed", str(raised.exception))
         self.assertNotIn("synthetic library details", str(raised.exception))
 
+    def test_timeout_error_includes_safe_request_context(self):
+        from scanner.confluence import ConfluenceClient, ConfluenceError
+
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            "synthetic-token",
+            timeout=7.5,
+        )
+        with patch.object(
+            client.session,
+            "get",
+            side_effect=requests.exceptions.Timeout("synthetic library details"),
+        ), self.assertRaises(ConfluenceError) as raised:
+            client.get_pages(start=50, limit=25, space_key="ENG")
+        client.close()
+
+        message = str(raised.exception)
+        self.assertIn("timed out", message)
+        self.assertIn("per-request timeout 7.5s", message)
+        self.assertIn("space=ENG", message)
+        self.assertIn("start=50", message)
+        self.assertNotIn("synthetic library details", message)
+
+    def test_connection_error_is_distinguished_from_http_failure(self):
+        from scanner.confluence import ConfluenceClient, ConfluenceError
+
+        client = ConfluenceClient(
+            "https://confluence.example.test",
+            "synthetic-token",
+        )
+        with patch.object(
+            client.session,
+            "get",
+            side_effect=requests.exceptions.ConnectionError(
+                "synthetic library details"
+            ),
+        ), self.assertRaises(ConfluenceError) as raised:
+            client.get_spaces(start=100, limit=50)
+        client.close()
+
+        message = str(raised.exception)
+        self.assertIn("connection failed after retries", message)
+        self.assertIn("start=100", message)
+        self.assertNotIn("synthetic library details", message)
+
     def test_token_and_explicit_auth_cannot_be_combined(self):
         from scanner.auth import ConfluenceAuth
         from scanner.confluence import ConfluenceClient

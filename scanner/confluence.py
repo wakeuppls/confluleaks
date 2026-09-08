@@ -301,17 +301,8 @@ class ConfluenceClient:
                 return b"".join(chunks)
         except AttachmentTooLargeError:
             raise
-        except requests.exceptions.SSLError as error:
-            raise ConfluenceError(
-                f"Confluence TLS certificate verification failed: {url}"
-            ) from error
         except requests.RequestException as error:
-            status = getattr(error.response, "status_code", None)
-            suffix = f" (HTTP {status})" if status else ""
-            raise ConfluenceError(
-                f"Confluence attachment request failed{suffix}: {url}",
-                status_code=status,
-            ) from error
+            raise self._request_error(error, url, attachment=True) from error
 
     def _same_origin(self, url: str) -> bool:
         expected = urlsplit(self.base_url)
@@ -374,6 +365,7 @@ class ConfluenceClient:
         self, endpoint: str, params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         url = self.absolute_url(endpoint)
+        request_target = self._request_target(url, params)
         try:
             self._wait_before_request()
             with self.session.get(
@@ -390,7 +382,7 @@ class ConfluenceClient:
                         if int(declared_size) > self.max_response_bytes:
                             raise ResponseTooLargeError(
                                 "Confluence response exceeds the configured "
-                                f"size limit: {url}"
+                                f"size limit: {request_target}"
                             )
                     except ValueError:
                         pass
@@ -404,29 +396,85 @@ class ConfluenceClient:
                     if downloaded > self.max_response_bytes:
                         raise ResponseTooLargeError(
                             "Confluence response exceeds the configured "
-                            f"size limit: {url}"
+                            f"size limit: {request_target}"
                         )
                     chunks.append(chunk)
                 payload = json.loads(b"".join(chunks))
         except ResponseTooLargeError:
             raise
-        except requests.exceptions.SSLError as error:
-            raise ConfluenceError(
-                f"Confluence TLS certificate verification failed: {url}"
-            ) from error
         except requests.RequestException as error:
-            status = getattr(error.response, "status_code", None)
-            suffix = f" (HTTP {status})" if status else ""
-            raise ConfluenceError(
-                f"Confluence request failed{suffix}: {url}",
-                status_code=status,
-            ) from error
+            raise self._request_error(error, request_target) from error
         except ValueError as error:
-            raise ConfluenceError(f"Confluence returned invalid JSON: {url}") from error
+            raise ConfluenceError(
+                f"Confluence returned invalid JSON: {request_target}"
+            ) from error
 
         if not isinstance(payload, dict):
-            raise ConfluenceError(f"Confluence returned an invalid response: {url}")
+            raise ConfluenceError(
+                f"Confluence returned an invalid response: {request_target}"
+            )
         return payload
+
+    def _request_error(
+        self,
+        error: requests.RequestException,
+        request_target: str,
+        attachment: bool = False,
+    ) -> ConfluenceError:
+        resource = "attachment " if attachment else ""
+        if isinstance(error, requests.exceptions.SSLError):
+            return ConfluenceError(
+                f"Confluence {resource}TLS certificate verification failed: "
+                f"{request_target}"
+            )
+        if isinstance(error, requests.exceptions.Timeout):
+            return ConfluenceError(
+                f"Confluence {resource}request timed out "
+                f"(per-request timeout {self.timeout:g}s): {request_target}"
+            )
+        if isinstance(error, requests.exceptions.TooManyRedirects):
+            return ConfluenceError(
+                f"Confluence {resource}request exceeded the redirect limit: "
+                f"{request_target}"
+            )
+        if isinstance(error, requests.exceptions.ConnectionError):
+            return ConfluenceError(
+                f"Confluence {resource}connection failed after retries: "
+                f"{request_target}"
+            )
+        if isinstance(error, requests.exceptions.ChunkedEncodingError):
+            return ConfluenceError(
+                f"Confluence {resource}response stream was interrupted: "
+                f"{request_target}"
+            )
+
+        status = getattr(error.response, "status_code", None)
+        suffix = f" (HTTP {status})" if status else ""
+        return ConfluenceError(
+            f"Confluence {resource}request failed{suffix}: {request_target}",
+            status_code=status,
+        )
+
+    @staticmethod
+    def _request_target(
+        url: str,
+        params: Optional[Dict[str, Any]],
+    ) -> str:
+        if not params:
+            return url
+        labels = {
+            "spaceKey": "space",
+            "start": "start",
+            "limit": "limit",
+            "status": "status",
+            "version": "version",
+        }
+        context = [
+            f"{label}={params[key]}"
+            for key, label in labels.items()
+            if key in params and not isinstance(params[key], (dict, list, tuple))
+        ]
+        return f"{url} ({', '.join(context)})" if context else url
 
     @staticmethod
     def _validated_ca_bundle(ca_bundle: Optional[Path]) -> Optional[Path]:

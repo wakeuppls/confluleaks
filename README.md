@@ -29,6 +29,7 @@ baseline output.
 - rule-specific context, entropy thresholds, allowlists, and stopwords;
 - deduplication of the same finding across page versions;
 - retry/backoff for rate limits and transient server failures;
+- interactive progress on stderr without corrupting JSON or SARIF output;
 - bounded REST responses, document sizes, regex execution, finding counts, and
   total runtime for safer operation on large installations;
 - text, JSON, and SARIF 2.1.0 reports;
@@ -244,6 +245,26 @@ confluleaks \
   --request-delay 0.1 \
   --format json
 ```
+
+## Progress reporting
+
+Interactive scans report progress to stderr automatically. The final text,
+JSON, or SARIF report remains isolated on stdout and can still be redirected to
+a file. Progress includes space discovery and selection, the current space,
+periodic page/version/comment/attachment counters, candidate finding counts,
+elapsed time, and the last space reached before a request failure.
+
+```bash
+# Force progress when stderr is redirected or the process is not attached to a TTY.
+confluleaks --progress --format json > confluleaks-report.json
+
+# Disable progress explicitly, for example in CI.
+confluleaks --no-progress --format sarif > confluleaks.sarif
+```
+
+For long broad scans, `--continue-on-error` preserves a partial report and moves
+on to other spaces after recoverable failures. The partial result still exits
+with status `1` and must not be treated as a clean scan.
 
 ## Scan scope
 
@@ -471,7 +492,10 @@ rule IDs as persistent API identifiers once a baseline is in use.
 ## Reliability controls
 
 The client retries `429`, `500`, `502`, `503`, and `504` responses with
-exponential backoff and honors `Retry-After`.
+exponential backoff and honors `Retry-After`. Terminal errors distinguish HTTP
+status failures, per-request timeouts, exhausted connection retries, interrupted
+response streams, redirect loops, and TLS verification failures. Collection
+errors include safe pagination context such as the space key and start offset.
 
 ```bash
 confluleaks \
@@ -553,6 +577,7 @@ confluleaks [OPTIONS]
 --retries N                  transient request retries (default: 3)
 --backoff SECONDS            retry backoff factor (default: 0.5)
 --request-delay SECONDS      minimum delay between request starts
+--progress / --no-progress   control progress on stderr (default: auto)
 
 --baseline PATH              suppress known findings
 --write-baseline PATH        atomically write a baseline

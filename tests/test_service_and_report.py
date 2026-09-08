@@ -119,6 +119,33 @@ class ServiceAndReportTest(unittest.TestCase):
         self.assertEqual(payload["errors"], [])
         self.assertNotIn("secret-value", output.getvalue())
 
+    def test_progress_reports_scope_and_counts_without_source_content(self):
+        regex = r"password=(?P<secret>\S+)"
+        rule = Rule(
+            id="password",
+            name="Password",
+            severity=Severity.HIGH,
+            regex=regex,
+            pattern=re.compile(regex),
+            confidence=0.9,
+        )
+        messages = []
+
+        SecretScanner(
+            FakeConfluenceClient(),
+            Detector([rule]),
+            progress=messages.append,
+        ).scan()
+
+        progress = "\n".join(messages)
+        self.assertIn("Discovering visible spaces", progress)
+        self.assertIn("Scanning space ENG (1/1)", progress)
+        self.assertIn("pages_seen=1", progress)
+        self.assertIn("candidate_findings=1", progress)
+        self.assertIn("Scan complete", progress)
+        self.assertNotIn("Deployment", progress)
+        self.assertNotIn("secret-value", progress)
+
     def test_history_is_scanned_and_duplicate_findings_are_collapsed(self):
         regex = r"password=(?P<secret>\S+)"
         rule = Rule(
@@ -457,16 +484,22 @@ class ScopeTest(unittest.TestCase):
 
     def test_continue_on_error_scans_remaining_spaces(self):
         client = ScopeFakeConfluenceClient(broken_space="ENG")
+        progress = []
 
         result = SecretScanner(
             client,
             Detector([]),
             continue_on_error=True,
+            progress=progress.append,
         ).scan()
 
         self.assertEqual(client.requested_spaces, ["ENG", "PUBLIC"])
         self.assertEqual(result.pages_scanned, 1)
         self.assertEqual(len(result.errors), 1)
+        messages = "\n".join(progress)
+        self.assertIn("Request failed in space ENG", messages)
+        self.assertIn("Finished space ENG with errors", messages)
+        self.assertIn("Scanning space PUBLIC (2/2)", messages)
 
     def test_missing_storage_body_is_not_treated_as_clean_content(self):
         client = ScopeFakeConfluenceClient()

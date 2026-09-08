@@ -30,6 +30,7 @@ BOOLEAN_FIELDS = {
     "comments",
     "attachments",
     "continue_on_error",
+    "progress",
 }
 POSITIVE_INTEGER_FIELDS = {
     "page_size",
