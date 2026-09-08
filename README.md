@@ -1,11 +1,14 @@
 # Confluleaks
 
+[![CI](https://github.com/wakeuppls/confluleaks/actions/workflows/ci.yml/badge.svg)](https://github.com/wakeuppls/confluleaks/actions/workflows/ci.yml)
+
 A small, read-only AppSec scanner for finding accidentally exposed credentials
 in Confluence pages, page history, comments, and text attachments.
 
-> **Status:** functional MVP, suitable for local evaluation and controlled
-> scans. Review [Known limitations](#known-limitations) before using it against
-> a production Confluence instance.
+> **Status:** functional MVP, validated against Confluence Data Center 7.13.7
+> and suitable for controlled scans. Review
+> [Known limitations](#known-limitations) before using it against a production
+> Confluence instance.
 
 The scanner reports metadata and stable fingerprints. By default it omits the
 matched secret and surrounding source text from text, JSON, and SARIF output.
@@ -22,6 +25,7 @@ diagnostic log output always remain secret-safe.
 - optional scanning of current footer, inline, and resolved comments;
 - optional scanning of supported text attachments with a hard size limit;
 - Bearer token and HTTP Basic authentication;
+- custom CA bundles without disabling TLS verification;
 - versioned YAML configuration with strict validation and CLI overrides;
 - read-only preflight checks for authentication, REST API shape, and requested
   content capabilities;
@@ -31,6 +35,7 @@ diagnostic log output always remain secret-safe.
 - deduplication of the same finding across page versions;
 - retry/backoff for rate limits and transient server failures;
 - interactive progress on stderr without corrupting JSON or SARIF output;
+- rotating diagnostic logs with secret-safe HTTP request metadata;
 - bounded REST responses, document sizes, regex execution, finding counts, and
   total runtime for safer operation on large installations;
 - text, JSON, and SARIF 2.1.0 reports;
@@ -42,8 +47,8 @@ diagnostic log output always remain secret-safe.
 
 - Browser/SSO sessions, OAuth, Kerberos, client certificates, and manually
   supplied cookies are not supported.
-- The client targets the REST API v1 response shape. It has not yet been
-  compatibility-tested against every Confluence Cloud and Data Center release.
+- The client targets the REST API v1 response shape; support outside the
+  versions listed under [Compatibility](#compatibility) is not yet verified.
 - Only Confluence `body.storage` page content is extracted.
 - Comment history is not scanned; only comments currently returned for each page
   are inspected.
@@ -67,6 +72,18 @@ diagnostic log output always remain secret-safe.
 
 Use a dedicated least-privilege account where possible.
 
+## Compatibility
+
+| Confluence edition | Status |
+| --- | --- |
+| Data Center 7.13.7 | Preflight and scanning validated against a real installation. |
+| Other Data Center releases | Not yet tested systematically; run `--preflight` before scanning. |
+| Confluence Cloud | REST API v1 is targeted, but end-to-end compatibility has not yet been verified. |
+
+Compatibility depends on the enabled endpoints, authentication provider, and
+permissions of the configured account. A successful preflight validates a
+small sample, not every page or optional content type in the installation.
+
 ## Installation
 
 From the repository root:
@@ -84,7 +101,8 @@ Running `python -m confluleaks` directly from the checkout is also supported.
 ## Authentication
 
 Authentication secrets are read only from environment variables. Bearer is the
-default and is appropriate for Confluence Data Center personal access tokens:
+default and is appropriate for
+[Confluence Data Center personal access tokens](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html):
 
 ```bash
 export CONFLUENCE_URL='https://confluence.example.com'
@@ -93,8 +111,9 @@ confluleaks --space ENG
 ```
 
 Basic authentication uses `CONFLUENCE_USERNAME` as the user ID and
-`CONFLUENCE_TOKEN` as the password or API token. For Confluence Cloud, use the
-account email as the username and an API token as the secret:
+`CONFLUENCE_TOKEN` as the password or API token. For
+[Confluence Cloud](https://developer.atlassian.com/cloud/confluence/basic-auth-for-rest-apis/),
+use the account email as the username and an API token as the secret:
 
 ```bash
 export CONFLUENCE_URL='https://example.atlassian.net/wiki'
@@ -109,9 +128,9 @@ SSO plugins may define their own token scheme. For example,
 are used as the Basic-auth password together with the underlying Confluence
 username, not as Bearer tokens.
 
-`--auth bearer` or `--auth basic` overrides `CONFLUENCE_AUTH`. Bearer remains
-the default for backward compatibility. Prefer a dedicated least-privilege
-account and tokens over reusable account passwords.
+`--auth bearer` or `--auth basic` overrides `CONFLUENCE_AUTH`. Bearer is the
+default. Prefer a dedicated least-privilege account and tokens over reusable
+account passwords.
 
 ## TLS verification
 
@@ -350,8 +369,9 @@ confluleaks --comments
 ```
 
 Comments are fetched page by page. Findings identify the parent page and
-comment ID, but never include the comment body, author, matched value, or a
-surrounding snippet. Comment edit history is not scanned.
+comment ID, but do not include the comment body, author, or a surrounding
+snippet. The matched value is omitted by default and included only with the
+explicitly unsafe `--show-secrets` option. Comment edit history is not scanned.
 
 ### Attachments
 
@@ -405,6 +425,9 @@ mode is enabled; they are never copied into diagnostic logs or baselines.
 Treat the resulting report as credential material: keep it local, restrict its
 permissions, do not upload SARIF produced this way, and delete it after the
 credentials have been rotated or revoked.
+
+Reported line and column numbers refer to the scanner's extracted plain text,
+not to line numbers shown by the Confluence editor or storage-format HTML.
 
 SARIF 2.1.0:
 
@@ -602,20 +625,24 @@ confluleaks [OPTIONS]
 --version                    print the installed version
 --rules PATH                 load a YAML rules file
 --format {text,json,sarif}   output format (default: text)
---show-secrets               include plaintext matches (unsafe; default: off)
+--show-secrets / --no-show-secrets
+                             include plaintext matches (unsafe; default: off)
 --page-size N                pagination size (default: 50; capped at 200)
 --timeout SECONDS            request timeout (default: 20)
 
 --space KEY                  include only KEY; repeatable
 --exclude-space KEY          exclude KEY; repeatable
---include-personal-spaces    include personal spaces by default
---include-archived-spaces    include archived spaces by default
+--include-personal-spaces / --no-include-personal-spaces
+                             control personal-space discovery
+--include-archived-spaces / --no-include-archived-spaces
+                             control archived-space discovery
 --max-pages N                stop after N current pages
 
---history                    scan all previous page versions
+--history / --no-history     control historical page-version scanning
 --history-limit N            scan at most N previous versions per page
---comments                   scan current page comments
---attachments                scan supported text attachments
+--comments / --no-comments   control current comment scanning
+--attachments / --no-attachments
+                             control supported text attachment scanning
 --max-attachment-size-mb MB  attachment limit (default: 5 MiB)
 --max-response-size-mb MB    REST response limit (default: 16 MiB)
 --max-document-size-mb MB    content body limit (default: 5 MiB)
@@ -625,7 +652,8 @@ confluleaks [OPTIONS]
                              per-document finding limit (default: 1000)
 --max-runtime SECONDS        soft scan runtime limit (default: 3600)
 
---continue-on-error          emit a partial result and continue
+--continue-on-error / --no-continue-on-error
+                             control partial results after recoverable errors
 --retries N                  transient request retries (default: 3)
 --backoff SECONDS            retry backoff factor (default: 0.5)
 --request-delay SECONDS      minimum delay between request starts
@@ -693,6 +721,10 @@ merged and validated before `ConfluenceClient` is constructed.
 - A real finding should trigger credential revocation or rotation; removing it
   from Confluence alone is not sufficient.
 
+Report security vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md). Never attach live credentials, internal scan
+results, or private Confluence content to a public issue.
+
 ## Testing
 
 Run the complete test suite:
@@ -711,8 +743,9 @@ The tests cover configuration discovery, precedence, and validation;
 extraction; rules; context and entropy filtering; report redaction; history
 deduplication; comment scanning; attachment classification and limits;
 response/document/finding/runtime guardrails; regex timeouts; retry
-configuration; preflight compatibility checks; SARIF structure; baseline
-stability; and partial-error behavior.
+configuration; progress and diagnostic logging; opt-in plaintext reports;
+preflight compatibility checks; SARIF structure; baseline stability; and
+partial-error behavior.
 
 ## License
 
@@ -728,6 +761,8 @@ scanner/
   auth.py             Bearer and Basic authentication strategies
   config.py           YAML discovery, schema, and validation
   preflight.py        read-only connection and compatibility checks
+  progress.py         elapsed progress output for long scans
+  logging_config.py   rotating structured diagnostic logs
   main.py             CLI and exit-code policy
   confluence.py       REST client, pagination, retries, downloads
   service.py          scan orchestration and scope
@@ -748,37 +783,18 @@ pyproject.toml         Python build backend configuration
 setup.cfg              metadata, dependencies, package data, and console script
 MANIFEST.in            source-distribution inclusion and exclusion rules
 LICENSE / NOTICE       Apache-2.0 terms and attribution
+SECURITY.md             private vulnerability reporting policy
+.github/workflows/      test and package-build CI
 ```
-
-## Suggested refactoring checklist
-
-The MVP behavior is covered by tests, so the following work can be done in
-small steps:
-
-1. Complete package metadata with project URLs, license selection, build checks,
-   and a release workflow.
-2. Introduce typed protocols for the Confluence client and document scanner to
-   make test doubles explicit.
-3. Split `SecretScanner` page, history, comment, and attachment orchestration
-   into focused components.
-4. Replace string locations such as `line:2:column:10` with a typed source
-   region in the domain model.
-5. Add CLI-level tests for argument validation and combinations of baseline,
-   history, comments, attachments, and exit thresholds.
-6. Add sanitized fixtures captured from the exact target Confluence editions
-   and versions.
-7. Evaluate whether OAuth or enterprise authentication adapters belong in the
-   base package or optional integrations.
-8. Evaluate incremental scanning, bounded concurrency, and structured metrics
-   only after establishing rate-limit behavior on the target instance.
 
 ## Roadmap
 
-- compatibility testing against the target Confluence Cloud/Data Center
-  versions;
+- automated release publishing;
+- compatibility testing against additional Confluence Data Center releases and
+  Confluence Cloud;
 - optional PDF and Office extraction without adding heavy dependencies to the
   base installation;
 - modified-since or CQL-based incremental scans;
+- optional OAuth or enterprise authentication adapters;
 - issue-tracker integration;
-- packaging, release versioning, and CI configuration;
 - bounded concurrency and structured operational metrics.

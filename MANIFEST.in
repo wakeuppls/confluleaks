@@ -1,3 +1,5 @@
+include confluleaks.example.yaml
+include SECURITY.md
 exclude MOCK_CONFLUENCE.md
 exclude tests/test_mock_confluence.py
 prune mock_confluence
