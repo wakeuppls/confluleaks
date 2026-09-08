@@ -15,11 +15,17 @@ class DetectionTimeoutError(RuntimeError):
 
 
 class Detector:
-    def __init__(self, rules: Iterable[Rule], regex_timeout: float = 0.25) -> None:
+    def __init__(
+        self,
+        rules: Iterable[Rule],
+        regex_timeout: float = 0.25,
+        show_secrets: bool = False,
+    ) -> None:
         if not math.isfinite(regex_timeout) or regex_timeout <= 0:
             raise ValueError("regex_timeout must be a positive finite number")
         self.rules = tuple(rules)
         self.regex_timeout = regex_timeout
+        self.show_secrets = show_secrets
 
     def scan(self, page: Page) -> List[Finding]:
         findings, _ = self.scan_bounded(page)
@@ -84,6 +90,7 @@ class Detector:
                             attachment_id=page.attachment_id,
                             attachment_name=page.attachment_name,
                             comment_id=page.comment_id,
+                            matched_value=secret if self.show_secrets else None,
                         )
                     )
             except TimeoutError as error:

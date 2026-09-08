@@ -37,7 +37,22 @@ class DetectorTest(unittest.TestCase):
         self.assertEqual(finding.location, "line:2:column:10")
         self.assertEqual(finding.confidence, 0.8)
         self.assertNotIn("do-not-print-me", serialized)
+        self.assertIsNone(finding.matched_value)
         self.assertEqual(len(finding.fingerprint), 64)
+
+    def test_plaintext_match_is_retained_only_when_explicitly_enabled(self):
+        finding = Detector(
+            [make_rule()],
+            show_secrets=True,
+        ).scan(self.page)[0]
+
+        self.assertEqual(finding.matched_value, "do-not-print-me")
+        self.assertNotIn("do-not-print-me", repr(finding))
+        self.assertNotIn("do-not-print-me", str(finding.to_dict()))
+        self.assertIn(
+            "do-not-print-me",
+            str(finding.to_dict(show_secrets=True)),
+        )
 
     def test_context_can_be_required_and_boosts_confidence(self):
         rule = make_rule(

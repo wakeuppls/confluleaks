@@ -67,8 +67,9 @@ class Finding:
     attachment_name: Optional[str] = None
     comment_id: Optional[str] = None
     matched_versions: Tuple[int, ...] = ()
+    matched_value: Optional[str] = field(default=None, repr=False, compare=False)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, show_secrets: bool = False) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "rule_id": self.rule_id,
             "rule_name": self.rule_name,
@@ -100,6 +101,8 @@ class Finding:
                     "name": self.attachment_name or self.attachment_id,
                 },
             }
+        if show_secrets and self.matched_value is not None:
+            result["matched_value"] = self.matched_value
         return result
 
 
@@ -144,7 +147,7 @@ class ScanResult:
             counts[finding.severity.value] += 1
         return counts
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, show_secrets: bool = False) -> Dict[str, Any]:
         return {
             "scanned": {
                 "spaces_discovered": self.spaces_discovered,
@@ -165,6 +168,9 @@ class ScanResult:
             "truncation_reasons": list(self.truncation_reasons),
             "finding_counts": self.counts_by_severity(),
             "baseline": {"suppressed_findings": self.findings_suppressed},
-            "findings": [finding.to_dict() for finding in self.findings],
+            "findings": [
+                finding.to_dict(show_secrets=show_secrets)
+                for finding in self.findings
+            ],
             "errors": [error.to_dict() for error in self.errors],
         }

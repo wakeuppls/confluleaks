@@ -32,6 +32,7 @@ request_delay: 0
 # progress: true  # automatic on interactive terminals
 # log_file: logs/confluleaks.log
 # log_level: debug
+# show_secrets: false  # unsafe: writes plaintext matches to the report
 
 # Uncomment these for a deliberately bounded pilot. Reaching max_pages marks
 # the result as incomplete; history_limit automatically enables history.

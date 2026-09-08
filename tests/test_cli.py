@@ -44,6 +44,15 @@ class PublicCliTest(unittest.TestCase):
         self.assertFalse(parser.parse_args([]).comments)
         self.assertTrue(parser.parse_args(["--comments"]).comments)
 
+    def test_show_secrets_is_explicit_and_can_override_config(self):
+        self.assertFalse(build_parser().parse_args([]).show_secrets)
+        self.assertTrue(build_parser().parse_args(["--show-secrets"]).show_secrets)
+        self.assertFalse(
+            build_parser({"show_secrets": True})
+            .parse_args(["--no-show-secrets"])
+            .show_secrets
+        )
+
     def test_progress_can_be_forced_or_disabled(self):
         parser = build_parser({"progress": True})
 
@@ -291,6 +300,43 @@ class PublicCliTest(unittest.TestCase):
         unsafe_url = "https://alice:secret@confluence.example.test"
 
         self.assertEqual(_safe_url_for_log(unsafe_url), "<credentials-redacted>")
+
+    def test_show_secrets_is_forwarded_to_detection_and_report(self):
+        result = ScanResult()
+        scanner = Mock()
+        scanner.scan.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+        stderr = StringIO()
+
+        with patch.dict(
+            os.environ,
+            {"CONFLUENCE_TOKEN": "synthetic-token"},
+            clear=True,
+        ), patch("scanner.main.load_rules", return_value=[]), patch(
+            "scanner.main.ConfluenceClient",
+            return_value=client,
+        ), patch("scanner.main.Detector") as detector_class, patch(
+            "scanner.main.SecretScanner",
+            return_value=scanner,
+        ), patch("scanner.main.write_json_report") as writer, redirect_stdout(
+            StringIO()
+        ), redirect_stderr(stderr):
+            exit_code = main(
+                [
+                    "--no-config",
+                    "--url",
+                    "https://confluence.example.test",
+                    "--show-secrets",
+                    "--format",
+                    "json",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(detector_class.call_args.kwargs["show_secrets"])
+        self.assertTrue(writer.call_args.kwargs["show_secrets"])
+        self.assertIn("writes plaintext secrets", stderr.getvalue())
 
     def test_truncated_result_returns_operational_error(self):
         result = ScanResult()

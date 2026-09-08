@@ -5,7 +5,11 @@ from scanner import PRODUCT_NAME
 from scanner.models import ScanResult, Severity
 
 
-def write_text_report(result: ScanResult, stream: TextIO) -> None:
+def write_text_report(
+    result: ScanResult,
+    stream: TextIO,
+    show_secrets: bool = False,
+) -> None:
     counts = result.counts_by_severity()
     stream.write(f"{PRODUCT_NAME}\n\n")
     stream.write("Scanned:\n")
@@ -64,6 +68,8 @@ def write_text_report(result: ScanResult, stream: TextIO) -> None:
         stream.write(f"  Location: {finding.location}\n")
         stream.write(f"  Confidence: {finding.confidence:.2f}\n")
         stream.write(f"  Fingerprint: {finding.fingerprint}\n")
+        if show_secrets and finding.matched_value is not None:
+            stream.write(f"  Matched value: {finding.matched_value}\n")
         if finding.page_url:
             stream.write(f"  URL: {finding.page_url}\n")
 
@@ -73,6 +79,15 @@ def write_text_report(result: ScanResult, stream: TextIO) -> None:
             stream.write(f"  [{error.scope}] {error.message}\n")
 
 
-def write_json_report(result: ScanResult, stream: TextIO) -> None:
-    json.dump(result.to_dict(), stream, indent=2, ensure_ascii=False)
+def write_json_report(
+    result: ScanResult,
+    stream: TextIO,
+    show_secrets: bool = False,
+) -> None:
+    json.dump(
+        result.to_dict(show_secrets=show_secrets),
+        stream,
+        indent=2,
+        ensure_ascii=False,
+    )
     stream.write("\n")

@@ -7,9 +7,10 @@ in Confluence pages, page history, comments, and text attachments.
 > scans. Review [Known limitations](#known-limitations) before using it against
 > a production Confluence instance.
 
-The scanner reports metadata and stable fingerprints. It intentionally omits
-the matched secret and surrounding source text from text, JSON, SARIF, and
-baseline output.
+The scanner reports metadata and stable fingerprints. By default it omits the
+matched secret and surrounding source text from text, JSON, and SARIF output.
+Plaintext matches can be requested explicitly for local review; baseline and
+diagnostic log output always remain secret-safe.
 
 ## Features
 
@@ -33,6 +34,7 @@ baseline output.
 - bounded REST responses, document sizes, regex execution, finding counts, and
   total runtime for safer operation on large installations;
 - text, JSON, and SARIF 2.1.0 reports;
+- explicit opt-in plaintext match output for controlled local review;
 - versioned baselines for suppressing reviewed findings;
 - CI-friendly exit codes.
 
@@ -386,6 +388,24 @@ Scanner-native JSON:
 confluleaks --format json > confluence-results.json
 ```
 
+Matched values are omitted by default. For a controlled local review, use the
+explicitly unsafe `--show-secrets` mode:
+
+```bash
+mkdir -p results
+chmod 700 results
+umask 077
+confluleaks --show-secrets --format json > results/confluence-secrets.json
+```
+
+Each finding then contains `matched_value` in JSON, `Matched value` in text,
+or `matchedValue` in SARIF. The scanner prints a warning to stderr whenever
+this mode is active. Plaintext matches are retained in memory only while this
+mode is enabled; they are never copied into diagnostic logs or baselines.
+Treat the resulting report as credential material: keep it local, restrict its
+permissions, do not upload SARIF produced this way, and delete it after the
+credentials have been rotated or revoked.
+
 SARIF 2.1.0:
 
 ```bash
@@ -582,6 +602,7 @@ confluleaks [OPTIONS]
 --version                    print the installed version
 --rules PATH                 load a YAML rules file
 --format {text,json,sarif}   output format (default: text)
+--show-secrets               include plaintext matches (unsafe; default: off)
 --page-size N                pagination size (default: 50; capped at 200)
 --timeout SECONDS            request timeout (default: 20)
 
@@ -657,7 +678,8 @@ merged and validated before `ConfluenceClient` is constructed.
   authorities must be trusted by Python/Requests or supplied through a CA
   bundle; HTTP should be limited to isolated local testing.
 - HTTP response bodies are not included in request exceptions.
-- Matched values and source snippets are not written to reports or baselines.
+- Matched values are omitted from reports unless `--show-secrets` is enabled;
+  source snippets and baseline files remain secret-safe in either mode.
 - Attachment downloads reject direct cross-origin URLs to avoid forwarding the
   Confluence authorization header to an unrelated host.
 - Reports still contain page titles, URLs, attachment names, rule IDs, and

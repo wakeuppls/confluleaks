@@ -20,7 +20,7 @@ class SarifReportTest(unittest.TestCase):
             pattern=re.compile(regex),
             confidence=0.8,
         )
-        detector = Detector([rule])
+        detector = Detector([rule], show_secrets=True)
         page = Page(
             id="42",
             title="Deployment",
@@ -129,6 +129,22 @@ class SarifReportTest(unittest.TestCase):
 
         self.assertEqual(payload["version"], "2.1.0")
         self.assertNotIn("do-not-print-me", output.getvalue())
+
+    def test_writer_can_explicitly_include_matched_value(self):
+        output = io.StringIO()
+
+        write_sarif_report(self.result, output, show_secrets=True)
+        payload = json.loads(output.getvalue())
+        sarif_result = payload["runs"][0]["results"][0]
+
+        self.assertEqual(
+            sarif_result["properties"]["matchedValue"],
+            "do-not-print-me",
+        )
+        self.assertNotIn(
+            "intentionally omitted",
+            sarif_result["message"]["text"],
+        )
 
     def test_partial_scan_errors_are_tool_notifications(self):
         self.result.mark_truncated("response_size")

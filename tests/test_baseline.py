@@ -111,6 +111,19 @@ class BaselineTest(unittest.TestCase):
             self.assertNotIn("second-secret", first_output)
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    def test_baseline_omits_retained_plaintext_match(self):
+        finding = replace(
+            make_finding("retained-secret"),
+            matched_value="retained-secret",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "baseline.json"
+
+            write_baseline(path, [finding])
+            output = path.read_text(encoding="utf-8")
+
+        self.assertNotIn("retained-secret", output)
+
     def test_load_rejects_invalid_version_and_identity(self):
         fixtures = (
             {"version": 2, "findings": []},

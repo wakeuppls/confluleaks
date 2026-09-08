@@ -15,12 +15,24 @@ SARIF_SCHEMA = (
 LOCATION_PATTERN = re.compile(r"^line:(\d+):column:(\d+)$")
 
 
-def write_sarif_report(result: ScanResult, stream: TextIO) -> None:
-    json.dump(build_sarif(result), stream, indent=2, ensure_ascii=False)
+def write_sarif_report(
+    result: ScanResult,
+    stream: TextIO,
+    show_secrets: bool = False,
+) -> None:
+    json.dump(
+        build_sarif(result, show_secrets=show_secrets),
+        stream,
+        indent=2,
+        ensure_ascii=False,
+    )
     stream.write("\n")
 
 
-def build_sarif(result: ScanResult) -> Dict[str, Any]:
+def build_sarif(
+    result: ScanResult,
+    show_secrets: bool = False,
+) -> Dict[str, Any]:
     rule_indices: Dict[str, int] = {}
     rules: List[Dict[str, Any]] = []
     artifact_indices: Dict[str, int] = {}
@@ -48,7 +60,13 @@ def build_sarif(result: ScanResult) -> Dict[str, Any]:
             )
 
         sarif_results.append(
-            _sarif_result(finding, rule_index, artifact_index, artifact_uri)
+            _sarif_result(
+                finding,
+                rule_index,
+                artifact_index,
+                artifact_uri,
+                show_secrets=show_secrets,
+            )
         )
 
     invocation: Dict[str, Any] = {
@@ -113,6 +131,7 @@ def _sarif_result(
     rule_index: int,
     artifact_index: int,
     artifact_uri: str,
+    show_secrets: bool = False,
 ) -> Dict[str, Any]:
     region = _region(finding.location)
     physical_location: Dict[str, Any] = {
@@ -142,16 +161,21 @@ def _sarif_result(
             finding.attachment_name or finding.attachment_id
         )
 
+    matched_value_is_available = (
+        show_secrets and finding.matched_value is not None
+    )
+    if matched_value_is_available:
+        properties["matchedValue"] = finding.matched_value
+
+    message = f"{finding.rule_name} detected in Confluence content."
+    if not matched_value_is_available:
+        message += " The matched value is intentionally omitted."
+
     return {
         "ruleId": finding.rule_id,
         "ruleIndex": rule_index,
         "level": _sarif_level(finding.severity),
-        "message": {
-            "text": (
-                f"{finding.rule_name} detected in Confluence content. "
-                "The matched value is intentionally omitted."
-            )
-        },
+        "message": {"text": message},
         "locations": [{"physicalLocation": physical_location}],
         "partialFingerprints": {
             "primaryLocationLineHash": _location_fingerprint(finding)

@@ -34,6 +34,7 @@ baseline: state/baseline.json
 spaces: [" ENG ", OPS, ENG]
 exclude_spaces: []
 comments: true
+show_secrets: true
 page_size: 25
 timeout: 10
 retries: 2
@@ -61,6 +62,7 @@ fail_on: high
         self.assertEqual(configuration.values["log_level"], "debug")
         self.assertEqual(configuration.values["spaces"], ["ENG", "OPS"])
         self.assertTrue(configuration.values["comments"])
+        self.assertTrue(configuration.values["show_secrets"])
         self.assertEqual(configuration.values["page_size"], 25)
         self.assertEqual(configuration.values["timeout"], 10.0)
         self.assertEqual(

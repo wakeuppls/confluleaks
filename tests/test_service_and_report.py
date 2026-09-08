@@ -119,6 +119,52 @@ class ServiceAndReportTest(unittest.TestCase):
         self.assertEqual(payload["errors"], [])
         self.assertNotIn("secret-value", output.getvalue())
 
+    def test_plaintext_match_can_be_explicitly_included_in_reports(self):
+        regex = r"password=(?P<secret>\S+)"
+        rule = Rule(
+            id="password",
+            name="Password",
+            severity=Severity.HIGH,
+            regex=regex,
+            pattern=re.compile(regex),
+            confidence=0.9,
+        )
+        result = SecretScanner(
+            FakeConfluenceClient(),
+            Detector([rule], show_secrets=True),
+        ).scan()
+        text_output = io.StringIO()
+        json_output = io.StringIO()
+
+        write_text_report(result, text_output, show_secrets=True)
+        write_json_report(result, json_output, show_secrets=True)
+
+        self.assertIn("Matched value: secret-value", text_output.getvalue())
+        self.assertEqual(
+            json.loads(json_output.getvalue())["findings"][0]["matched_value"],
+            "secret-value",
+        )
+
+    def test_safe_writer_omits_retained_plaintext_match(self):
+        regex = r"password=(?P<secret>\S+)"
+        rule = Rule(
+            id="password",
+            name="Password",
+            severity=Severity.HIGH,
+            regex=regex,
+            pattern=re.compile(regex),
+            confidence=0.9,
+        )
+        result = SecretScanner(
+            FakeConfluenceClient(),
+            Detector([rule], show_secrets=True),
+        ).scan()
+        output = io.StringIO()
+
+        write_json_report(result, output)
+
+        self.assertNotIn("secret-value", output.getvalue())
+
     def test_progress_reports_scope_and_counts_without_source_content(self):
         regex = r"password=(?P<secret>\S+)"
         rule = Rule(

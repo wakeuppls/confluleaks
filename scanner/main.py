@@ -130,6 +130,12 @@ def build_parser(
         choices=("text", "json", "sarif"),
         default=setting("format", "text"),
     )
+    parser.add_argument(
+        "--show-secrets",
+        action=argparse.BooleanOptionalAction,
+        default=setting("show_secrets", False),
+        help="include plaintext matched values in reports (unsafe; default: off)",
+    )
     parser.add_argument("--page-size", type=int, default=setting("page_size", 50))
     parser.add_argument("--timeout", type=float, default=setting("timeout", 20.0))
     parser.add_argument(
@@ -369,6 +375,7 @@ def _run(
         history_limit=args.history_limit,
         comments=args.comments,
         attachments=args.attachments,
+        show_secrets=args.show_secrets,
         continue_on_error=args.continue_on_error,
         page_size=args.page_size,
         timeout_seconds=args.timeout,
@@ -382,6 +389,16 @@ def _run(
         args.progress if args.progress is not None else sys.stderr.isatty()
     )
     progress = ProgressReporter(sys.stderr) if progress_enabled else None
+    if args.show_secrets and not args.preflight:
+        print(
+            "warning: --show-secrets writes plaintext secrets to report output",
+            file=sys.stderr,
+        )
+        log_event(
+            logger,
+            logging.WARNING,
+            "output.plaintext_secrets_enabled",
+        )
     if progress:
         progress(f"Starting {operation}")
 
@@ -413,7 +430,11 @@ def _run(
                 rules = load_rules(args.rules)
                 result = SecretScanner(
                     client,
-                    Detector(rules, regex_timeout=args.regex_timeout),
+                    Detector(
+                        rules,
+                        regex_timeout=args.regex_timeout,
+                        show_secrets=args.show_secrets,
+                    ),
                     include_history=args.history,
                     history_limit=args.history_limit,
                     include_spaces=args.space,
@@ -488,11 +509,23 @@ def _run(
         return 1
 
     if args.format == "json":
-        write_json_report(result, sys.stdout)
+        write_json_report(
+            result,
+            sys.stdout,
+            show_secrets=args.show_secrets,
+        )
     elif args.format == "sarif":
-        write_sarif_report(result, sys.stdout)
+        write_sarif_report(
+            result,
+            sys.stdout,
+            show_secrets=args.show_secrets,
+        )
     else:
-        write_text_report(result, sys.stdout)
+        write_text_report(
+            result,
+            sys.stdout,
+            show_secrets=args.show_secrets,
+        )
 
     exit_code = 1 if result.errors or result.truncated else 0
     if exit_code == 0 and args.fail_on:
