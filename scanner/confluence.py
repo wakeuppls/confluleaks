@@ -101,6 +101,9 @@ class ConfluenceClient:
             params={"start": start, "limit": limit or self.page_size},
         )
 
+    def get_current_user(self) -> Dict[str, Any]:
+        return self._get("/rest/api/user/current")
+
     def iter_spaces(self) -> Iterator[Dict[str, Any]]:
         yield from self._iterate("/rest/api/space")
 

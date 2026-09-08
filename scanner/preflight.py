@@ -63,6 +63,9 @@ class PreflightChecker:
 
     def run(self) -> PreflightResult:
         result = PreflightResult()
+        if not self._check_authentication(result):
+            return result
+
         try:
             spaces_payload = self.confluence.get_spaces(limit=1)
             visible_spaces = self._collection(spaces_payload, "spaces")
@@ -76,7 +79,7 @@ class PreflightChecker:
         result.add(
             "rest_api",
             "pass",
-            "authentication succeeded and REST API v1 returned a valid collection",
+            "REST API v1 returned a valid collection",
         )
 
         target_spaces = []
@@ -100,6 +103,24 @@ class PreflightChecker:
         for space_key in target_spaces:
             self._check_space_capabilities(space_key, result)
         return result
+
+    def _check_authentication(self, result: PreflightResult) -> bool:
+        try:
+            user = self.confluence.get_current_user()
+            self._authenticated_user(user)
+        except ConfluenceError as error:
+            result.add("authentication", "fail", self._request_failure(error))
+            return False
+        except PreflightValidationError as error:
+            result.add("authentication", "fail", str(error))
+            return False
+
+        result.add(
+            "authentication",
+            "pass",
+            "Confluence recognized the configured account",
+        )
+        return True
 
     def _check_space(self, space_key: str, result: PreflightResult) -> str:
         name = f"space:{space_key}"
@@ -304,6 +325,36 @@ class PreflightChecker:
         if content_id is None or not str(content_id).strip():
             raise PreflightValidationError(f"{label} response is missing an id")
         return str(content_id)
+
+    @staticmethod
+    def _authenticated_user(user: Any) -> None:
+        if not isinstance(user, dict):
+            raise PreflightValidationError("current user response must be an object")
+
+        identity_fields = ("username", "userKey", "accountId")
+        markers = [user.get("type")]
+        markers.extend(user.get(field) for field in identity_fields)
+        if any(
+            isinstance(marker, str)
+            and marker.strip().casefold() == "anonymous"
+            for marker in markers
+        ):
+            raise PreflightValidationError(
+                "Confluence treated the request as anonymous"
+            )
+
+        user_type = user.get("type")
+        normalized_user_type = (
+            user_type.strip().casefold() if isinstance(user_type, str) else ""
+        )
+        has_identity = any(
+            isinstance(user.get(field), str) and user[field].strip()
+            for field in identity_fields
+        )
+        if normalized_user_type != "known" and not has_identity:
+            raise PreflightValidationError(
+                "current user response does not identify an authenticated account"
+            )
 
     @staticmethod
     def _request_failure(error: ConfluenceError) -> str:

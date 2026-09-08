@@ -152,9 +152,10 @@ you plan to enable:
 confluleaks --preflight --space ENG
 ```
 
-This checks authentication, the REST API v1 collection shape, direct access to
-the requested space, and one current page response. Add scope flags to probe
-their endpoints too:
+This verifies the current user through `/rest/api/user/current`, rejects an
+anonymous session, checks the REST API v1 collection shape, verifies direct
+access to the requested space, and inspects one current page response. Add
+scope flags to probe their endpoints too:
 
 ```bash
 confluleaks \
@@ -171,7 +172,9 @@ their collection endpoints; attachments are not downloaded. The history check
 requests at most one previous version of the sample page. If no `--space` is
 provided, the first visible space and one of its pages are used as samples.
 
-`PASS` means the sampled endpoint returned the expected REST API v1 shape.
+`PASS` means the authenticated account was recognized and the sampled endpoint
+returned the expected REST API v1 shape. User identity fields are never written
+to preflight output.
 `WARN` means a capability could not be verified because there was no suitable
 sample, such as a previous page version; warnings still return exit code `0`.
 `FAIL` covers rejected authentication, missing permissions, unavailable

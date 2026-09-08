@@ -11,6 +11,13 @@ from scanner.preflight import (
 
 
 class HealthyPreflightClient:
+    def get_current_user(self):
+        return {
+            "type": "known",
+            "username": "synthetic-scanner",
+            "displayName": "Synthetic Scanner Account",
+        }
+
     def get_spaces(self, limit=None):
         return {"results": [{"key": "ENG"}]}
 
@@ -68,6 +75,7 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(
             [check.name for check in result.checks],
             [
+                "authentication",
                 "rest_api",
                 "space:ENG",
                 "pages:ENG",
@@ -80,7 +88,7 @@ class PreflightTest(unittest.TestCase):
 
     def test_authentication_failure_stops_without_exposing_response_body(self):
         class UnauthorizedClient(HealthyPreflightClient):
-            def get_spaces(self, limit=None):
+            def get_current_user(self):
                 raise ConfluenceError(
                     "request failed without response body",
                     status_code=401,
@@ -95,6 +103,22 @@ class PreflightTest(unittest.TestCase):
             result.checks[0].message,
             "authentication was rejected by Confluence (HTTP 401)",
         )
+
+    def test_anonymous_session_fails_before_space_discovery(self):
+        class AnonymousClient(HealthyPreflightClient):
+            def get_current_user(self):
+                return {"type": "anonymous", "displayName": "Anonymous"}
+
+            def get_spaces(self, limit=None):
+                raise AssertionError("space discovery must not run anonymously")
+
+        result = PreflightChecker(AnonymousClient()).run()
+
+        self.assertFalse(result.ok)
+        self.assertEqual(len(result.checks), 1)
+        self.assertEqual(result.checks[0].name, "authentication")
+        self.assertEqual(result.checks[0].status, "fail")
+        self.assertIn("anonymous", result.checks[0].message)
 
     def test_unavailable_previous_version_is_a_warning(self):
         class MissingHistoryClient(HealthyPreflightClient):
@@ -150,6 +174,8 @@ class PreflightTest(unittest.TestCase):
         self.assertNotIn("synthetic source body", combined)
         self.assertNotIn("synthetic comment body", combined)
         self.assertNotIn("synthetic historical body", combined)
+        self.assertNotIn("Synthetic Scanner Account", combined)
+        self.assertNotIn("synthetic-scanner", combined)
 
 
 if __name__ == "__main__":

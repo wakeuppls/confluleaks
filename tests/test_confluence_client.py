@@ -166,22 +166,24 @@ class ConfluenceClientConfigurationTest(unittest.TestCase):
             "synthetic-token",
         )
         with patch.object(client, "_get", return_value={"results": []}) as get:
+            client.get_current_user()
             client.get_space("TEAM/OPS")
             client.get_comments("page/10", limit=1)
             client.get_attachments("page/10", limit=1)
         client.close()
 
-        self.assertEqual(get.call_args_list[0].args, ("/rest/api/space/TEAM%2FOPS",))
-        self.assertEqual(
-            get.call_args_list[1].args,
-            ("/rest/api/content/page%2F10/child/comment",),
-        )
-        self.assertEqual(get.call_args_list[1].kwargs["params"]["limit"], 1)
+        self.assertEqual(get.call_args_list[0].args, ("/rest/api/user/current",))
+        self.assertEqual(get.call_args_list[1].args, ("/rest/api/space/TEAM%2FOPS",))
         self.assertEqual(
             get.call_args_list[2].args,
-            ("/rest/api/content/page%2F10/child/attachment",),
+            ("/rest/api/content/page%2F10/child/comment",),
         )
         self.assertEqual(get.call_args_list[2].kwargs["params"]["limit"], 1)
+        self.assertEqual(
+            get.call_args_list[3].args,
+            ("/rest/api/content/page%2F10/child/attachment",),
+        )
+        self.assertEqual(get.call_args_list[3].kwargs["params"]["limit"], 1)
 
     def test_declared_oversized_rest_response_is_rejected(self):
         from scanner.confluence import ConfluenceClient, ResponseTooLargeError
