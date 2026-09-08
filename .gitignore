@@ -21,6 +21,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+*.log
 
 output/
 results/

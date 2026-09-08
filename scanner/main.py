@@ -1,9 +1,11 @@
 import argparse
+import logging
 import math
 import os
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 from scanner import PRODUCT_COMMAND, __version__
 from scanner.auth import AuthConfigurationError, AuthMethod, ConfluenceAuth
@@ -16,6 +18,11 @@ from scanner.baseline import (
 from scanner.confluence import ConfluenceClient, ConfluenceError
 from scanner.config import ConfigurationError, discover_config_path, load_config
 from scanner.detector import Detector
+from scanner.logging_config import (
+    DiagnosticLogError,
+    diagnostic_logging,
+    log_event,
+)
 from scanner.models import Severity
 from scanner.preflight import (
     PreflightChecker,
@@ -254,6 +261,22 @@ def build_parser(
         help="show scan progress on stderr (default: interactive terminals)",
     )
     parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=os.environ.get(
+            "CONFLULEAKS_LOG_FILE",
+            setting("log_file", None),
+        ),
+        metavar="PATH",
+        help="write rotating diagnostic logs to this file",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=("debug", "info", "warning", "error"),
+        default=setting("log_level", "info"),
+        help="diagnostic file log level (default: info)",
+    )
+    parser.add_argument(
         "--fail-on",
         choices=tuple(severity.value for severity in Severity),
         default=setting("fail_on", None),
@@ -302,17 +325,64 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.preflight and args.write_baseline:
         parser.error("--write-baseline cannot be used with --preflight")
     _validate_arguments(parser, args)
+
+    try:
+        with diagnostic_logging(args.log_file, args.log_level) as logger:
+            return _run(parser, args, logger)
+    except DiagnosticLogError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def _run(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> int:
     try:
         auth = _load_auth(args.auth)
     except AuthConfigurationError as error:
+        log_event(
+            logger,
+            logging.ERROR,
+            "authentication.configuration_failed",
+            error=str(error),
+        )
         parser.error(str(error))
 
+    operation = "preflight" if args.preflight else "scan"
+    log_event(
+        logger,
+        logging.INFO,
+        "run.started",
+        version=__version__,
+        operation=operation,
+        url=_safe_url_for_log(args.url),
+        auth=args.auth,
+        ca_bundle=str(args.ca_bundle) if args.ca_bundle else None,
+        output_format=args.format,
+        rules=str(args.rules),
+        baseline=str(args.baseline) if args.baseline else None,
+        spaces=args.space,
+        exclude_spaces=args.exclude_space,
+        history=args.history,
+        history_limit=args.history_limit,
+        comments=args.comments,
+        attachments=args.attachments,
+        continue_on_error=args.continue_on_error,
+        page_size=args.page_size,
+        timeout_seconds=args.timeout,
+        retries=args.retries,
+        backoff=args.backoff,
+        request_delay_seconds=args.request_delay,
+        max_pages=args.max_pages,
+        max_runtime_seconds=args.max_runtime,
+    )
     progress_enabled = (
         args.progress if args.progress is not None else sys.stderr.isatty()
     )
     progress = ProgressReporter(sys.stderr) if progress_enabled else None
     if progress:
-        operation = "preflight" if args.preflight else "scan"
         progress(f"Starting {operation}")
 
     try:
@@ -376,7 +446,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 write_json_preflight(preflight_result, sys.stdout)
             else:
                 write_text_preflight(preflight_result, sys.stdout)
-            return 0 if preflight_result.ok else 1
+            exit_code = 0 if preflight_result.ok else 1
+            log_event(
+                logger,
+                logging.INFO,
+                "run.finished",
+                operation=operation,
+                exit_code=exit_code,
+                preflight_ok=preflight_result.ok,
+            )
+            return exit_code
 
         observed_findings = tuple(result.findings)
         if args.write_baseline:
@@ -397,6 +476,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ) as error:
         if progress:
             progress("Operation failed")
+        log_event(
+            logger,
+            logging.ERROR,
+            "run.failed",
+            operation=operation,
+            error_type=type(error).__name__,
+            error=str(error),
+        )
         print(f"error: {error}", file=sys.stderr)
         return 1
 
@@ -407,13 +494,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         write_text_report(result, sys.stdout)
 
-    if result.errors or result.truncated:
-        return 1
-    if args.fail_on:
+    exit_code = 1 if result.errors or result.truncated else 0
+    if exit_code == 0 and args.fail_on:
         threshold = Severity(args.fail_on).rank
         if any(finding.severity.rank >= threshold for finding in result.findings):
-            return 2
-    return 0
+            exit_code = 2
+    log_event(
+        logger,
+        logging.INFO,
+        "run.finished",
+        operation=operation,
+        exit_code=exit_code,
+        spaces=result.spaces_scanned,
+        pages=result.pages_scanned,
+        findings=len(result.findings),
+        errors=len(result.errors),
+        truncated=result.truncated,
+    )
+    return exit_code
 
 
 def _load_auth(method: str) -> ConfluenceAuth:
@@ -430,6 +528,17 @@ def _load_auth(method: str) -> ConfluenceAuth:
             "CONFLUENCE_USERNAME is required for Basic authentication"
         )
     return ConfluenceAuth.basic(username, secret)
+
+
+def _safe_url_for_log(url: str) -> str:
+    """Keep invalid credentials-in-URL input out of diagnostic logs."""
+    try:
+        parsed = urlsplit(url)
+    except (TypeError, ValueError):
+        return "<invalid-url>"
+    if parsed.username is not None or parsed.password is not None:
+        return "<credentials-redacted>"
+    return url
 
 
 def _validate_arguments(

@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import time
 from pathlib import Path
@@ -11,6 +12,10 @@ from urllib3.util.retry import Retry
 
 from scanner import __version__
 from scanner.auth import ConfluenceAuth
+from scanner.logging_config import log_event
+
+
+LOGGER = logging.getLogger("confluleaks.http")
 
 
 class ConfluenceError(RuntimeError):
@@ -267,6 +272,7 @@ class ConfluenceClient:
         url = self.absolute_url(endpoint)
         if not self._same_origin(url):
             raise ConfluenceError("refusing a cross-origin attachment download URL")
+        started_at = self._log_request_start(url, attachment=True)
         try:
             self._wait_before_request()
             with self.session.get(
@@ -298,11 +304,22 @@ class ConfluenceClient:
                             "attachment exceeds the configured size limit"
                         )
                     chunks.append(chunk)
-                return b"".join(chunks)
-        except AttachmentTooLargeError:
+                content = b"".join(chunks)
+                self._log_request_success(
+                    url,
+                    response,
+                    len(content),
+                    started_at,
+                    attachment=True,
+                )
+                return content
+        except AttachmentTooLargeError as error:
+            self._log_request_failure(url, error, started_at, attachment=True)
             raise
         except requests.RequestException as error:
-            raise self._request_error(error, url, attachment=True) from error
+            wrapped = self._request_error(error, url, attachment=True)
+            self._log_request_failure(url, wrapped, started_at, attachment=True)
+            raise wrapped from error
 
     def _same_origin(self, url: str) -> bool:
         expected = urlsplit(self.base_url)
@@ -366,6 +383,7 @@ class ConfluenceClient:
     ) -> Dict[str, Any]:
         url = self.absolute_url(endpoint)
         request_target = self._request_target(url, params)
+        started_at = self._log_request_start(request_target)
         try:
             self._wait_before_request()
             with self.session.get(
@@ -400,20 +418,89 @@ class ConfluenceClient:
                         )
                     chunks.append(chunk)
                 payload = json.loads(b"".join(chunks))
-        except ResponseTooLargeError:
+                self._log_request_success(
+                    request_target,
+                    response,
+                    downloaded,
+                    started_at,
+                )
+        except ResponseTooLargeError as error:
+            self._log_request_failure(request_target, error, started_at)
             raise
         except requests.RequestException as error:
-            raise self._request_error(error, request_target) from error
+            wrapped = self._request_error(error, request_target)
+            self._log_request_failure(request_target, wrapped, started_at)
+            raise wrapped from error
         except ValueError as error:
-            raise ConfluenceError(
+            wrapped = ConfluenceError(
                 f"Confluence returned invalid JSON: {request_target}"
-            ) from error
+            )
+            self._log_request_failure(request_target, wrapped, started_at)
+            raise wrapped from error
 
         if not isinstance(payload, dict):
-            raise ConfluenceError(
+            error = ConfluenceError(
                 f"Confluence returned an invalid response: {request_target}"
             )
+            self._log_request_failure(request_target, error, started_at)
+            raise error
         return payload
+
+    def _log_request_start(self, request_target: str, attachment: bool = False) -> float:
+        started_at = time.monotonic()
+        log_event(
+            LOGGER,
+            logging.DEBUG,
+            "http.request.started",
+            method="GET",
+            target=request_target,
+            resource="attachment" if attachment else "rest_api",
+            timeout_seconds=self.timeout,
+        )
+        return started_at
+
+    @staticmethod
+    def _log_request_success(
+        request_target: str,
+        response,
+        response_bytes: int,
+        started_at: float,
+        attachment: bool = False,
+    ) -> None:
+        retry_state = getattr(getattr(response, "raw", None), "retries", None)
+        retry_history = getattr(retry_state, "history", ())
+        attempts = 1 + len(retry_history) if retry_history is not None else 1
+        log_event(
+            LOGGER,
+            logging.DEBUG,
+            "http.request.finished",
+            method="GET",
+            target=request_target,
+            resource="attachment" if attachment else "rest_api",
+            status=getattr(response, "status_code", None),
+            response_bytes=response_bytes,
+            attempts=attempts,
+            elapsed_ms=round((time.monotonic() - started_at) * 1_000, 3),
+        )
+
+    @staticmethod
+    def _log_request_failure(
+        request_target: str,
+        error: Exception,
+        started_at: float,
+        attachment: bool = False,
+    ) -> None:
+        log_event(
+            LOGGER,
+            logging.WARNING,
+            "http.request.failed",
+            method="GET",
+            target=request_target,
+            resource="attachment" if attachment else "rest_api",
+            error_type=type(error).__name__,
+            error=str(error),
+            elapsed_ms=round((time.monotonic() - started_at) * 1_000, 3),
+        )
 
     def _request_error(
         self,

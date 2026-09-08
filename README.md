@@ -144,15 +144,17 @@ file and the local file.
 Settings are resolved in this order, from highest to lowest priority:
 
 1. command-line options;
-2. `CONFLUENCE_URL`, `CONFLUENCE_AUTH`, and `CONFLUENCE_CA_BUNDLE`;
+2. `CONFLUENCE_URL`, `CONFLUENCE_AUTH`, `CONFLUENCE_CA_BUNDLE`, and
+   `CONFLULEAKS_LOG_FILE`;
 3. the selected YAML file;
 4. built-in defaults.
 
 For repeatable `--space` and `--exclude-space` options, the first command-line
 occurrence replaces the whole configured list. Boolean settings can be
 overridden in either direction, for example `--comments` or `--no-comments`.
-Relative `rules`, `baseline`, and `ca_bundle` paths are resolved from the
-configuration file's directory rather than the process working directory.
+Relative `rules`, `baseline`, `ca_bundle`, and `log_file` paths are resolved
+from the configuration file's directory rather than the process working
+directory.
 `--preflight` and `--write-baseline` remain command-line-only actions.
 
 The schema is flat, uses `version: 1`, and accepts the option names shown in
@@ -265,6 +267,35 @@ confluleaks --no-progress --format sarif > confluleaks.sarif
 For long broad scans, `--continue-on-error` preserves a partial report and moves
 on to other spaces after recoverable failures. The partial result still exits
 with status `1` and must not be treated as a clean scan.
+
+## Diagnostic logs
+
+For a persistent execution trace, enable a rotating diagnostic log. `debug`
+records each logical HTTP request and response in addition to scan stages:
+
+```bash
+confluleaks \
+  --progress \
+  --log-file logs/confluleaks.log \
+  --log-level debug \
+  --continue-on-error \
+  --format json \
+  > confluleaks-report.json
+```
+
+Log entries contain UTC timestamps and JSON event payloads. Request events
+include the HTTP method, REST endpoint, safe scope/pagination parameters,
+timeout, status, response size, elapsed time, and request attempt count. Logs
+never include the authentication header, token, response body, page title,
+source content, or matched secret. They do contain internal URLs, space keys,
+content IDs, local configuration paths, and aggregate finding counts, so treat
+them as internal security data.
+
+New log files use owner-only permissions where the operating system supports
+them. Logs rotate at 10 MiB and retain three backups. `CONFLULEAKS_LOG_FILE`
+and the YAML fields `log_file` / `log_level` are also supported; relative YAML
+paths are resolved from the configuration file's directory. `info` records
+scan stages, while `debug` adds request-level detail.
 
 ## Scan scope
 
@@ -578,6 +609,8 @@ confluleaks [OPTIONS]
 --backoff SECONDS            retry backoff factor (default: 0.5)
 --request-delay SECONDS      minimum delay between request starts
 --progress / --no-progress   control progress on stderr (default: auto)
+--log-file PATH              rotating diagnostic log file
+--log-level LEVEL            debug, info, warning, or error (default: info)
 
 --baseline PATH              suppress known findings
 --write-baseline PATH        atomically write a baseline
@@ -629,6 +662,9 @@ merged and validated before `ConfluenceClient` is constructed.
   Confluence authorization header to an unrelated host.
 - Reports still contain page titles, URLs, attachment names, rule IDs, and
   fingerprints. Treat them as internal security data.
+- Diagnostic logs omit credentials and content but retain internal URLs, space
+  keys, content IDs, local paths, and operational counters. Protect them like
+  scan reports.
 - Fingerprints are hashes, not encryption. Low-entropy credentials may be
   guessable offline, so reports still need appropriate retention and access
   controls.

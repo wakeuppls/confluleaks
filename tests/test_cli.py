@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -9,7 +10,13 @@ from unittest.mock import MagicMock, Mock, patch
 import confluleaks
 import scanner
 from scanner.auth import AuthConfigurationError, AuthMethod
-from scanner.main import _load_auth, _validate_arguments, build_parser, main
+from scanner.main import (
+    _load_auth,
+    _safe_url_for_log,
+    _validate_arguments,
+    build_parser,
+    main,
+)
 from scanner.models import ScanResult
 from scanner.preflight import PreflightResult
 
@@ -235,6 +242,55 @@ class PublicCliTest(unittest.TestCase):
         self.assertIn("Starting preflight", stderr.getvalue())
         self.assertIn("Preflight passed", stderr.getvalue())
         self.assertNotIn("[confluleaks", stdout.getvalue())
+
+    def test_diagnostic_log_records_run_without_credentials(self):
+        result = PreflightResult()
+        result.add("authentication", "pass", "synthetic success")
+        checker = Mock()
+        checker.run.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "confluleaks.log"
+            with patch.dict(
+                os.environ,
+                {"CONFLUENCE_TOKEN": "synthetic-secret-token"},
+                clear=True,
+            ), patch(
+                "scanner.main.ConfluenceClient",
+                return_value=client,
+            ), patch(
+                "scanner.main.PreflightChecker",
+                return_value=checker,
+            ), redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                exit_code = main(
+                    [
+                        "--no-config",
+                        "--url",
+                        "https://confluence.example.test",
+                        "--preflight",
+                        "--log-file",
+                        str(log_path),
+                        "--log-level",
+                        "debug",
+                        "--format",
+                        "json",
+                    ]
+                )
+
+            log_content = log_path.read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn('"event": "run.started"', log_content)
+        self.assertIn('"event": "run.finished"', log_content)
+        self.assertNotIn("synthetic-secret-token", log_content)
+        self.assertNotIn("CONFLUENCE_TOKEN", log_content)
+
+    def test_diagnostic_log_redacts_credentials_embedded_in_url(self):
+        unsafe_url = "https://alice:secret@confluence.example.test"
+
+        self.assertEqual(_safe_url_for_log(unsafe_url), "<credentials-redacted>")
 
     def test_truncated_result_returns_operational_error(self):
         result = ScanResult()

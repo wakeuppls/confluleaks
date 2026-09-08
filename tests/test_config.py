@@ -27,6 +27,8 @@ version: 1
 url: " https://confluence.example.test/confluence "
 auth: " BASIC "
 ca_bundle: " certs/company-ca.pem "
+log_file: " logs/confluleaks.log "
+log_level: DEBUG
 rules: " rules.yaml "
 baseline: state/baseline.json
 spaces: [" ENG ", OPS, ENG]
@@ -52,6 +54,11 @@ fail_on: high
             configuration.values["ca_bundle"],
             Path(directory) / "certs/company-ca.pem",
         )
+        self.assertEqual(
+            configuration.values["log_file"],
+            Path(directory) / "logs/confluleaks.log",
+        )
+        self.assertEqual(configuration.values["log_level"], "debug")
         self.assertEqual(configuration.values["spaces"], ["ENG", "OPS"])
         self.assertTrue(configuration.values["comments"])
         self.assertEqual(configuration.values["page_size"], 25)
@@ -158,6 +165,7 @@ fail_on: high
                 "CONFLUENCE_URL": "https://environment.example.test",
                 "CONFLUENCE_AUTH": "BEARER",
                 "CONFLUENCE_CA_BUNDLE": "/etc/company/environment-ca.pem",
+                "CONFLULEAKS_LOG_FILE": "/tmp/environment-confluleaks.log",
             },
             clear=True,
         ):
@@ -166,6 +174,7 @@ fail_on: high
                     "url": "https://configuration.example.test",
                     "auth": "basic",
                     "ca_bundle": Path("/etc/company/configuration-ca.pem"),
+                    "log_file": Path("/tmp/configuration-confluleaks.log"),
                 }
             )
             args = parser.parse_args([])
@@ -175,6 +184,10 @@ fail_on: high
         self.assertEqual(
             args.ca_bundle,
             Path("/etc/company/environment-ca.pem"),
+        )
+        self.assertEqual(
+            args.log_file,
+            Path("/tmp/environment-confluleaks.log"),
         )
 
     def test_explicit_config_is_applied_by_main_argument_loader(self):

@@ -1,3 +1,4 @@
+import logging
 import math
 import time
 from dataclasses import replace
@@ -17,6 +18,10 @@ from scanner.confluence import (
 from scanner.detector import DetectionTimeoutError, Detector
 from scanner.extractor import extract_text
 from scanner.models import Finding, Page, ScanError, ScanResult
+from scanner.logging_config import log_event
+
+
+LOGGER = logging.getLogger("confluleaks.scan")
 
 
 class ScanLimitReached(RuntimeError):
@@ -654,6 +659,12 @@ class SecretScanner:
         )
 
     def _emit_progress(self, message: str) -> None:
+        log_event(
+            LOGGER,
+            logging.INFO,
+            "scan.progress",
+            message=message,
+        )
         if self._progress is not None:
             self._progress(message)
 

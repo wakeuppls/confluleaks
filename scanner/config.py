@@ -50,12 +50,13 @@ POSITIVE_NUMBER_FIELDS = {
 }
 NONNEGATIVE_NUMBER_FIELDS = {"backoff", "request_delay"}
 STRING_FIELDS = {"url"}
-PATH_FIELDS = {"rules", "baseline", "ca_bundle"}
+PATH_FIELDS = {"rules", "baseline", "ca_bundle", "log_file"}
 LIST_FIELDS = {"spaces", "exclude_spaces"}
 CHOICE_FIELDS = {
     "auth": {"bearer", "basic"},
     "format": {"text", "json", "sarif"},
     "fail_on": {"low", "medium", "high", "critical"},
+    "log_level": {"debug", "info", "warning", "error"},
 }
 ALLOWED_FIELDS = (
     BOOLEAN_FIELDS
