@@ -149,6 +149,13 @@ configuration file's directory. Confluleaks deliberately has no insecure
 `-k`/`--no-verify` mode; install the corporate CA into the trust store used by
 Python/Requests or provide an explicit bundle.
 
+When the configured URL uses plain HTTP, an interactive run prints a warning
+and continues only after an explicit `y`/`yes` response. Non-interactive runs
+fail closed instead of waiting for input. For deliberately isolated local
+testing or automation, `--allow-insecure-http` bypasses the prompt but still
+prints and logs the warning. It does not disable certificate verification for
+HTTPS.
+
 ## Configuration
 
 Copy the tracked example to create a local configuration:
@@ -619,6 +626,7 @@ confluleaks [OPTIONS]
 --url URL                    override CONFLUENCE_URL
 --auth {bearer,basic}        authentication method (default: bearer)
 --ca-bundle PATH             PEM CA bundle for TLS verification
+--allow-insecure-http        bypass the HTTP confirmation prompt (unsafe)
 --config PATH                load this YAML configuration
 --no-config                  ignore environment-selected and local YAML files
 --preflight                  check authentication and REST capabilities
@@ -744,8 +752,8 @@ extraction; rules; context and entropy filtering; report redaction; history
 deduplication; comment scanning; attachment classification and limits;
 response/document/finding/runtime guardrails; regex timeouts; retry
 configuration; progress and diagnostic logging; opt-in plaintext reports;
-preflight compatibility checks; SARIF structure; baseline stability; and
-partial-error behavior.
+insecure-HTTP confirmation; preflight compatibility checks; SARIF structure;
+baseline stability; and partial-error behavior.
 
 ## License
 

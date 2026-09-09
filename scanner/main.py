@@ -98,6 +98,11 @@ def build_parser(
         metavar="PATH",
         help="PEM CA bundle for TLS verification (or set CONFLUENCE_CA_BUNDLE)",
     )
+    parser.add_argument(
+        "--allow-insecure-http",
+        action="store_true",
+        help="allow HTTP without an interactive confirmation (unsafe)",
+    )
     config_group = parser.add_mutually_exclusive_group()
     config_group.add_argument(
         "--config",
@@ -345,6 +350,21 @@ def _run(
     args: argparse.Namespace,
     logger: logging.Logger,
 ) -> int:
+    if not _confirm_insecure_http(args.url, args.allow_insecure_http):
+        log_event(
+            logger,
+            logging.WARNING,
+            "transport.insecure_http_declined",
+        )
+        return 1
+    if _uses_insecure_http(args.url):
+        log_event(
+            logger,
+            logging.WARNING,
+            "transport.insecure_http_accepted",
+            non_interactive_override=args.allow_insecure_http,
+        )
+
     try:
         auth = _load_auth(args.auth)
     except AuthConfigurationError as error:
@@ -366,6 +386,7 @@ def _run(
         url=_safe_url_for_log(args.url),
         auth=args.auth,
         ca_bundle=str(args.ca_bundle) if args.ca_bundle else None,
+        allow_insecure_http=args.allow_insecure_http,
         output_format=args.format,
         rules=str(args.rules),
         baseline=str(args.baseline) if args.baseline else None,
@@ -572,6 +593,56 @@ def _safe_url_for_log(url: str) -> str:
     if parsed.username is not None or parsed.password is not None:
         return "<credentials-redacted>"
     return url
+
+
+def _uses_insecure_http(url: str) -> bool:
+    try:
+        return urlsplit(url).scheme.casefold() == "http"
+    except (TypeError, ValueError):
+        return False
+
+
+def _confirm_insecure_http(
+    url: str,
+    allow_insecure_http: bool,
+    input_stream=None,
+    output_stream=None,
+) -> bool:
+    """Require an explicit decision before the CLI sends data over HTTP."""
+    if not _uses_insecure_http(url):
+        return True
+
+    input_stream = input_stream if input_stream is not None else sys.stdin
+    output_stream = output_stream if output_stream is not None else sys.stderr
+    print(
+        "warning: the Confluence URL uses unencrypted HTTP; credentials and "
+        "Confluence content may be exposed in transit",
+        file=output_stream,
+    )
+
+    if allow_insecure_http:
+        print(
+            "warning: continuing because --allow-insecure-http was provided",
+            file=output_stream,
+        )
+        return True
+
+    if not input_stream.isatty():
+        print(
+            "error: refusing insecure HTTP without interactive confirmation; "
+            "pass --allow-insecure-http to proceed",
+            file=output_stream,
+        )
+        return False
+
+    print("Continue with insecure HTTP? [y/N] ", end="", file=output_stream)
+    output_stream.flush()
+    answer = input_stream.readline()
+    if answer.strip().casefold() in {"y", "yes"}:
+        return True
+
+    print("aborted: insecure HTTP was not approved", file=output_stream)
+    return False
 
 
 def _validate_arguments(

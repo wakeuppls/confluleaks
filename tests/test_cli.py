@@ -11,6 +11,7 @@ import confluleaks
 import scanner
 from scanner.auth import AuthConfigurationError, AuthMethod
 from scanner.main import (
+    _confirm_insecure_http,
     _load_auth,
     _safe_url_for_log,
     _validate_arguments,
@@ -19,6 +20,11 @@ from scanner.main import (
 )
 from scanner.models import ScanResult
 from scanner.preflight import PreflightResult
+
+
+class TtyInput(StringIO):
+    def isatty(self):
+        return True
 
 
 class PublicCliTest(unittest.TestCase):
@@ -58,6 +64,116 @@ class PublicCliTest(unittest.TestCase):
 
         self.assertTrue(parser.parse_args([]).progress)
         self.assertFalse(parser.parse_args(["--no-progress"]).progress)
+
+    def test_https_does_not_require_transport_confirmation(self):
+        output = StringIO()
+
+        approved = _confirm_insecure_http(
+            "https://confluence.example.test",
+            False,
+            input_stream=TtyInput("n\n"),
+            output_stream=output,
+        )
+
+        self.assertTrue(approved)
+        self.assertEqual(output.getvalue(), "")
+
+    def test_interactive_http_requires_explicit_yes(self):
+        answers = (
+            ("y\n", True),
+            ("YES\n", True),
+            ("n\n", False),
+            ("\n", False),
+            ("", False),
+        )
+        for answer, expected in answers:
+            with self.subTest(answer=answer):
+                output = StringIO()
+                approved = _confirm_insecure_http(
+                    "http://confluence.example.test",
+                    False,
+                    input_stream=TtyInput(answer),
+                    output_stream=output,
+                )
+
+                self.assertEqual(approved, expected)
+                self.assertIn("unencrypted HTTP", output.getvalue())
+                self.assertIn("[y/N]", output.getvalue())
+
+    def test_noninteractive_http_fails_closed_without_override(self):
+        output = StringIO()
+
+        approved = _confirm_insecure_http(
+            "http://confluence.example.test",
+            False,
+            input_stream=StringIO("y\n"),
+            output_stream=output,
+        )
+
+        self.assertFalse(approved)
+        self.assertIn("--allow-insecure-http", output.getvalue())
+
+    def test_insecure_http_override_does_not_read_stdin(self):
+        output = StringIO()
+
+        approved = _confirm_insecure_http(
+            "http://127.0.0.1:8765",
+            True,
+            input_stream=StringIO(),
+            output_stream=output,
+        )
+
+        self.assertTrue(approved)
+        self.assertIn("continuing", output.getvalue())
+
+    def test_declined_http_stops_before_authentication(self):
+        with patch("sys.stdin", TtyInput("n\n")), patch(
+            "scanner.main.ConfluenceClient"
+        ) as client_class, redirect_stderr(StringIO()):
+            exit_code = main(
+                ["--no-config", "--url", "http://confluence.example.test"]
+            )
+
+        self.assertEqual(exit_code, 1)
+        client_class.assert_not_called()
+
+    def test_insecure_http_warning_does_not_corrupt_json(self):
+        result = PreflightResult()
+        result.add("authentication", "pass", "synthetic success")
+        checker = Mock()
+        checker.run.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with patch.dict(
+            os.environ,
+            {"CONFLUENCE_TOKEN": "synthetic-token"},
+            clear=True,
+        ), patch(
+            "scanner.main.ConfluenceClient",
+            return_value=client,
+        ), patch(
+            "scanner.main.PreflightChecker",
+            return_value=checker,
+        ), redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = main(
+                [
+                    "--no-config",
+                    "--url",
+                    "http://confluence.example.test",
+                    "--allow-insecure-http",
+                    "--preflight",
+                    "--format",
+                    "json",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(json.loads(stdout.getvalue())["preflight"]["ok"])
+        self.assertIn("unencrypted HTTP", stderr.getvalue())
+        self.assertNotIn("warning", stdout.getvalue())
 
     def test_auth_defaults_to_bearer_and_honors_environment_default(self):
         with patch.dict(os.environ, {}, clear=True):
