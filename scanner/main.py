@@ -3,6 +3,7 @@ import logging
 import math
 import os
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
@@ -23,9 +24,11 @@ from scanner.logging_config import (
     diagnostic_logging,
     log_event,
 )
-from scanner.models import Severity
+from scanner.models import ScanResult, Severity
+from scanner.output import ReportOutputError, write_report_output
 from scanner.preflight import (
     PreflightChecker,
+    PreflightResult,
     write_json_preflight,
     write_text_preflight,
 )
@@ -134,6 +137,12 @@ def build_parser(
         "--format",
         choices=("text", "json", "sarif"),
         default=setting("format", "text"),
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        metavar="PATH",
+        help="atomically write the report to PATH instead of stdout",
     )
     parser.add_argument(
         "--show-secrets",
@@ -319,7 +328,9 @@ def _parse_arguments(
     config_path = discover_config_path(raw_argv)
     configuration = load_config(config_path)
     parser = build_parser(configuration.values)
-    return parser, parser.parse_args(raw_argv)
+    args = parser.parse_args(raw_argv)
+    args._config_path = config_path
+    return parser, args
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -388,6 +399,7 @@ def _run(
         ca_bundle=str(args.ca_bundle) if args.ca_bundle else None,
         allow_insecure_http=args.allow_insecure_http,
         output_format=args.format,
+        output=str(args.output) if args.output else None,
         rules=str(args.rules),
         baseline=str(args.baseline) if args.baseline else None,
         spaces=args.space,
@@ -484,10 +496,7 @@ def _run(
             if progress:
                 outcome = "passed" if preflight_result.ok else "failed"
                 progress(f"Preflight {outcome}")
-            if args.format == "json":
-                write_json_preflight(preflight_result, sys.stdout)
-            else:
-                write_text_preflight(preflight_result, sys.stdout)
+            _write_preflight_report(args, preflight_result)
             exit_code = 0 if preflight_result.ok else 1
             log_event(
                 logger,
@@ -508,9 +517,11 @@ def _run(
             write_baseline(args.write_baseline, observed_findings)
         if baseline is not None:
             apply_baseline(result, baseline)
+        _write_scan_report(args, result)
     except (
         BaselineError,
         ConfluenceError,
+        ReportOutputError,
         RuleConfigurationError,
         KeyError,
         TypeError,
@@ -528,25 +539,6 @@ def _run(
         )
         print(f"error: {error}", file=sys.stderr)
         return 1
-
-    if args.format == "json":
-        write_json_report(
-            result,
-            sys.stdout,
-            show_secrets=args.show_secrets,
-        )
-    elif args.format == "sarif":
-        write_sarif_report(
-            result,
-            sys.stdout,
-            show_secrets=args.show_secrets,
-        )
-    else:
-        write_text_report(
-            result,
-            sys.stdout,
-            show_secrets=args.show_secrets,
-        )
 
     exit_code = 1 if result.errors or result.truncated else 0
     if exit_code == 0 and args.fail_on:
@@ -566,6 +558,39 @@ def _run(
         truncated=result.truncated,
     )
     return exit_code
+
+
+def _write_preflight_report(
+    args: argparse.Namespace,
+    result: PreflightResult,
+) -> None:
+    if args.format == "json":
+        writer = partial(write_json_preflight, result)
+    else:
+        writer = partial(write_text_preflight, result)
+    write_report_output(args.output, writer, stdout=sys.stdout)
+
+
+def _write_scan_report(args: argparse.Namespace, result: ScanResult) -> None:
+    if args.format == "json":
+        writer = partial(
+            write_json_report,
+            result,
+            show_secrets=args.show_secrets,
+        )
+    elif args.format == "sarif":
+        writer = partial(
+            write_sarif_report,
+            result,
+            show_secrets=args.show_secrets,
+        )
+    else:
+        writer = partial(
+            write_text_report,
+            result,
+            show_secrets=args.show_secrets,
+        )
+    write_report_output(args.output, writer, stdout=sys.stdout)
 
 
 def _load_auth(method: str) -> ConfluenceAuth:
@@ -697,6 +722,23 @@ def _validate_arguments(
     excluded_spaces = {key.casefold() for key in args.exclude_space}
     if included_spaces & excluded_spaces:
         parser.error("the same space cannot be included and excluded")
+
+    if args.output is not None:
+        protected_paths = (
+            ("--config", getattr(args, "_config_path", None)),
+            ("--rules", args.rules),
+            ("--ca-bundle", args.ca_bundle),
+            ("--log-file", args.log_file),
+            ("--baseline", args.baseline),
+            ("--write-baseline", args.write_baseline),
+        )
+        output_path = args.output.expanduser().resolve()
+        for option, protected_path in protected_paths:
+            if (
+                protected_path is not None
+                and protected_path.expanduser().resolve() == output_path
+            ):
+                parser.error(f"--output must not overwrite {option}")
 
 
 def _unique_space_keys(keys: Sequence[str]) -> list:

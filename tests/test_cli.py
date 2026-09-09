@@ -175,6 +175,57 @@ class PublicCliTest(unittest.TestCase):
         self.assertIn("unencrypted HTTP", stderr.getvalue())
         self.assertNotIn("warning", stdout.getvalue())
 
+    def test_preflight_can_write_json_report_to_file(self):
+        result = PreflightResult()
+        result.add("authentication", "pass", "synthetic success")
+        checker = Mock()
+        checker.run.return_value = result
+        client = MagicMock()
+        client.__enter__.return_value = client
+        stdout = StringIO()
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "nested" / "preflight.json"
+            with patch.dict(
+                os.environ,
+                {"CONFLUENCE_TOKEN": "synthetic-token"},
+                clear=True,
+            ), patch(
+                "scanner.main.ConfluenceClient",
+                return_value=client,
+            ), patch(
+                "scanner.main.PreflightChecker",
+                return_value=checker,
+            ), redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "--no-config",
+                        "--url",
+                        "https://confluence.example.test",
+                        "--preflight",
+                        "--format",
+                        "json",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(payload["preflight"]["ok"])
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_output_cannot_overwrite_a_scanner_input(self):
+        parser = build_parser()
+        path = Path("same-file.yaml")
+        args = parser.parse_args(["--rules", str(path), "--output", str(path)])
+
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as error:
+            _validate_arguments(parser, args)
+
+        self.assertEqual(error.exception.code, 2)
+
     def test_auth_defaults_to_bearer_and_honors_environment_default(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(build_parser().parse_args([]).auth, "bearer")

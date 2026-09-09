@@ -38,7 +38,7 @@ diagnostic log output always remain secret-safe.
 - rotating diagnostic logs with secret-safe HTTP request metadata;
 - bounded REST responses, document sizes, regex execution, finding counts, and
   total runtime for safer operation on large installations;
-- text, JSON, and SARIF 2.1.0 reports;
+- text, JSON, and SARIF 2.1.0 reports to stdout or private atomic files;
 - explicit opt-in plaintext match output for controlled local review;
 - versioned baselines for suppressing reviewed findings;
 - CI-friendly exit codes.
@@ -183,7 +183,8 @@ overridden in either direction, for example `--comments` or `--no-comments`.
 Relative `rules`, `baseline`, `ca_bundle`, and `log_file` paths are resolved
 from the configuration file's directory rather than the process working
 directory.
-`--preflight` and `--write-baseline` remain command-line-only actions.
+`--preflight`, `--output`, and `--write-baseline` remain command-line-only
+actions.
 
 The schema is flat, uses `version: 1`, and accepts the option names shown in
 [`confluleaks.example.yaml`](confluleaks.example.yaml). Unknown fields, invalid
@@ -412,8 +413,13 @@ confluleaks --format text
 Scanner-native JSON:
 
 ```bash
-confluleaks --format json > confluence-results.json
+confluleaks --format json --output confluence-results.json
 ```
+
+`--output PATH` writes text, JSON, SARIF, and preflight reports atomically
+instead of sending them to stdout. Missing parent directories are created, and
+the resulting file is restricted to the current user (`0600` on POSIX
+systems). An existing report is replaced only after the new report is complete.
 
 Matched values are omitted by default. For a controlled local review, use the
 explicitly unsafe `--show-secrets` mode:
@@ -422,7 +428,8 @@ explicitly unsafe `--show-secrets` mode:
 mkdir -p results
 chmod 700 results
 umask 077
-confluleaks --show-secrets --format json > results/confluence-secrets.json
+confluleaks --show-secrets --format json \
+  --output results/confluence-secrets.json
 ```
 
 Each finding then contains `matched_value` in JSON, `Matched value` in text,
@@ -439,7 +446,7 @@ not to line numbers shown by the Confluence editor or storage-format HTML.
 SARIF 2.1.0:
 
 ```bash
-confluleaks --format sarif > confluence-results.sarif
+confluleaks --format sarif --output confluence-results.sarif
 ```
 
 SARIF output contains rule descriptors, severity, confidence, page, comment,
@@ -452,7 +459,8 @@ source file in the repository.
 Use `--fail-on` to make findings affect CI:
 
 ```bash
-confluleaks --format sarif --fail-on high > confluence-results.sarif
+confluleaks --format sarif --fail-on high \
+  --output confluence-results.sarif
 ```
 
 | Exit code | Meaning |
@@ -633,6 +641,7 @@ confluleaks [OPTIONS]
 --version                    print the installed version
 --rules PATH                 load a YAML rules file
 --format {text,json,sarif}   output format (default: text)
+--output PATH                atomically write report instead of stdout
 --show-secrets / --no-show-secrets
                              include plaintext matches (unsafe; default: off)
 --page-size N                pagination size (default: 50; capped at 200)
@@ -751,9 +760,9 @@ The tests cover configuration discovery, precedence, and validation;
 extraction; rules; context and entropy filtering; report redaction; history
 deduplication; comment scanning; attachment classification and limits;
 response/document/finding/runtime guardrails; regex timeouts; retry
-configuration; progress and diagnostic logging; opt-in plaintext reports;
-insecure-HTTP confirmation; preflight compatibility checks; SARIF structure;
-baseline stability; and partial-error behavior.
+configuration; progress and diagnostic logging; private atomic report output;
+opt-in plaintext reports; insecure-HTTP confirmation; preflight compatibility
+checks; SARIF structure; baseline stability; and partial-error behavior.
 
 ## License
 
@@ -781,6 +790,7 @@ scanner/
   default_rules.yaml  built-in rule pack
   models.py           domain and report models
   baseline.py         baseline identity, loading, and atomic writing
+  output.py           private atomic report-file output
   report.py           text and scanner-native JSON output
   sarif.py            SARIF 2.1.0 output
 confluleaks/
@@ -797,7 +807,6 @@ SECURITY.md             private vulnerability reporting policy
 
 ## Roadmap
 
-- automated release publishing;
 - compatibility testing against additional Confluence Data Center releases and
   Confluence Cloud;
 - optional PDF and Office extraction without adding heavy dependencies to the
